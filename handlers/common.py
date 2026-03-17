@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 
-from config import ADMIN_ID, STUDIO_NAME, STUDIO_ADDRESS, STUDIO_MAPS_LINK
+from config import ADMIN_ID, ADMIN_IDS, STUDIO_NAME, STUDIO_ADDRESS, STUDIO_MAPS_LINK
 from keyboards.user_kb import main_menu_kb, back_to_menu_kb, portfolio_kb
 from database.db import get_services
 
@@ -21,7 +21,7 @@ async def is_subscribed(bot: Bot, user_id: int) -> bool:
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
-    admin = message.from_user.id == ADMIN_ID
+    admin = message.from_user.id in ADMIN_IDS
     await message.answer(
         f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
         f"Добро пожаловать в бот студии <b>{STUDIO_NAME}</b>.\n"
@@ -33,7 +33,7 @@ async def cmd_start(message: Message, state: FSMContext):
 @router.callback_query(F.data == "main_menu")
 async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
-    admin = callback.from_user.id == ADMIN_ID
+    admin = callback.from_user.id in ADMIN_IDS
     await callback.message.edit_text(
         f"💅 <b>Главное меню</b>\n\nВыберите действие:",
         reply_markup=main_menu_kb(is_admin=admin)

@@ -18,15 +18,14 @@ SCHEDULE_CHANNEL_ID = "@manicur1234"
 DB_PATH = "manicure_bot.db"
 
 # ---- Расписание ----
-SLOT_DURATION = 30   # длительность одного слота в минутах
+SLOT_DURATION = 15   # длительность одного слота в минутах
 
-
-
-
+# ---- Портфолио ----
 PORTFOLIO_LINK = "https://www.instagram.com/oy_brow_pmu/"
 PORTFOLIO_BUTTON_TEXT = "📸 Смотреть в Instagram"
+
 # ---- Студия ----
-STUDIO_NAME    = "Oy_Brow_Pmu"
+STUDIO_NAME      = "Oy_Brow_Pmu"
 STUDIO_ADDRESS   = "г. Островец, ул. Школьная, 3 к1"
 STUDIO_MAPS_LINK = "https://maps.app.goo.gl/eNa2Mo9VSnmeKL626"
 
@@ -36,7 +35,7 @@ DEFAULT_SERVICES = [
         "key":          "brows",
         "name":         "Брови",
         "price":        35,
-        "slots":        2,        # 2 × 30 мин = ~45 мин
+        "slots":        3,        # 3 × 15 мин = 45 мин
         "duration_str": "~45 мин",
         "emoji":        "✏️",
         "repeat_days":  21,
@@ -45,16 +44,16 @@ DEFAULT_SERVICES = [
         "key":          "brows_styling",
         "name":         "Долговременная укладка бровей",
         "price":        45,
-        "slots":        2,        # 2 × 30 мин = 1 час
+        "slots":        4,        # 4 × 15 мин = 1 час
         "duration_str": "~1 час",
         "emoji":        "✨",
         "repeat_days":  30,
     },
     {
-        "key":          "makeup_15h",
+        "key":          "makeup",
         "name":         "Макияж",
         "price":        75,
-        "slots":        3,        # 3 × 30 мин = 1.5 часа
+        "slots":        6,        # 6 × 15 мин = 1.5 часа
         "duration_str": "~1.5 часа",
         "emoji":        "💋",
         "repeat_days":  0,
@@ -63,7 +62,7 @@ DEFAULT_SERVICES = [
         "key":          "perm_2h",
         "name":         "Перманентный макияж (2 часа)",
         "price":        200,
-        "slots":        4,        # 4 × 30 мин = 2 часа
+        "slots":        8,        # 8 × 15 мин = 2 часа
         "duration_str": "~2 часа",
         "emoji":        "💄",
         "repeat_days":  30,
@@ -72,7 +71,7 @@ DEFAULT_SERVICES = [
         "key":          "perm_3h",
         "name":         "Перманентный макияж (3 часа)",
         "price":        200,
-        "slots":        6,        # 6 × 30 мин = 3 часа
+        "slots":        12,       # 12 × 15 мин = 3 часа
         "duration_str": "~3 часа",
         "emoji":        "💄",
         "repeat_days":  30,
@@ -81,7 +80,7 @@ DEFAULT_SERVICES = [
         "key":          "perm_correction",
         "name":         "Коррекция перманента",
         "price":        100,
-        "slots":        4,        # 4 × 30 мин = 2 часа
+        "slots":        8,        # 8 × 15 мин = 2 часа
         "duration_str": "~2 часа",
         "emoji":        "🔧",
         "repeat_days":  0,

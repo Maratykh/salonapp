@@ -11,7 +11,7 @@ from database.db import (
     get_all_future_appointments, save_job_ids,
     get_setting, get_service_by_key
 )
-from config import ADMIN_ID, SLOT_DURATION, MSG_REMINDER_24H, MSG_REPEAT_REMINDER, MSG_MASTER_30MIN
+from config import ADMIN_ID, ADMIN_IDS, SLOT_DURATION, MSG_REMINDER_24H, MSG_REPEAT_REMINDER, MSG_MASTER_30MIN
 from config import STUDIO_NAME, STUDIO_ADDRESS
 
 logger = logging.getLogger(__name__)
@@ -186,7 +186,11 @@ async def send_master_notification(bot: Bot, client_name: str,
         text = MSG_MASTER_30MIN.format(
             client=client_name, service=service_name, time=time_slot
         )
-        await bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(admin_id, text, parse_mode="HTML")
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"Ошибка уведомления мастеру: {e}")
 
@@ -220,9 +224,13 @@ async def ask_attendance(bot: Bot, appointment_id: int, client_name: str,
             client=client_name, service=service_name, time=time_slot
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="✅ Да, пришёл",    callback_data=f"attend_yes_{appointment_id}"),
-            InlineKeyboardButton(text="❌ Не пришёл", callback_data=f"attend_no_{appointment_id}"),
+            InlineKeyboardButton(text="✅ Да, пришёл",  callback_data=f"attend_yes_{appointment_id}"),
+            InlineKeyboardButton(text="❌ Не пришёл",   callback_data=f"attend_no_{appointment_id}"),
         ]])
-        await bot.send_message(ADMIN_ID, text, reply_markup=kb, parse_mode="HTML")
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(admin_id, text, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                pass
     except Exception as e:
         logger.error(f"Ошибка запроса явки: {e}")

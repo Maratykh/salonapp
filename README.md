@@ -1,6 +1,120 @@
-# 💅 Manicure Bot — Telegram-бот для записи на маникюр
+# 💅 SalonApp — Telegram-бот для записи клиентов
 
-Полнофункциональный Telegram-бот для мастера маникюра с FSM, SQLite, APScheduler и инлайн-клавиатурами.
+Универсальный бот для мастеров которые работают по записи: маникюр, барбер, массаж, косметология, фотографы, репетиторы и другие.
+
+---
+
+## ⚙️ Функционал
+
+### Клиент
+- 📅 Запись через инлайн-календарь — дата → услуга → время → имя → телефон
+- 📋 Просмотр и отмена своей записи (с подтверждением)
+- 💅 Прайс-лист услуг
+- 🖼 Портфолио
+- 📍 Как добраться
+- 🔔 Автонапоминание за 24 часа до визита
+
+### Мастер (`/admin`)
+- 📅 Просмотр расписания на любую дату с пагинацией
+- ➕ Добавить рабочий день — выбор начала и конца через тайм-пикер
+- 🗓 Добавить рабочие дни по дням недели сразу на месяц вперёд
+- 📝 Записать клиента вручную
+- ⏰ Управление слотами — удаление отдельных окон
+- 🔒 Закрыть / 🔓 Открыть день
+- ❌ Отмена любой записи из расписания
+- 💄 Управление услугами — добавить, редактировать, включить/отключить
+- 📊 Статистика — за месяц и за всё время, выручка, явка, популярные услуги
+- 📣 Рассылка всем клиентам
+- ✅ Отметка явки клиента
+
+### Автоматически
+- ⏰ Напоминание клиенту за 24 часа
+- ⏰ Уведомление мастеру за 30 минут до визита
+- 🔁 Напоминание о коррекции через N дней после услуги
+- ❓ Запрос явки мастеру после окончания приёма
+- 📢 Обновление расписания в канале (редактирует одно сообщение)
+
+---
+
+## 🛠 Установка
+
+### 1. Требования
+- Python 3.11+
+- Ubuntu 22.04 (для сервера)
+
+### 2. Распаковать архив
+```bash
+unzip manicure_bot.zip -d manicure_bot
+cd manicure_bot
+```
+
+### 3. Виртуальное окружение
+```bash
+python3.11 -m venv venv
+source venv/bin/activate        # Linux/Mac
+venv\Scripts\activate           # Windows
+pip install -r requirements.txt
+```
+
+### 4. Настроить config.py
+```python
+BOT_TOKEN        = "токен от @BotFather"
+ADMIN_ID         = 123456789
+STUDIO_NAME      = "Название студии"
+STUDIO_ADDRESS   = "Город, улица, дом"
+STUDIO_MAPS_LINK = "ссылка на карту"
+PORTFOLIO_LINK   = "ссылка на портфолио"
+SCHEDULE_CHANNEL_ID = "@ваш_канал"  # опционально
+```
+
+### 5. Запуск
+```bash
+python bot.py
+```
+
+---
+
+## 🚀 Деплой на VPS
+
+### Автозапуск через systemd
+```bash
+nano /etc/systemd/system/manicure_bot.service
+```
+```ini
+[Unit]
+Description=Manicure Bot
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/root/manicure_bot
+ExecStart=/root/manicure_bot/venv/bin/python bot.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+```bash
+systemctl daemon-reload
+systemctl enable manicure_bot
+systemctl start manicure_bot
+```
+
+### Полезные команды
+```bash
+systemctl status manicure_bot      # статус
+systemctl restart manicure_bot     # перезапуск
+journalctl -u manicure_bot -f      # логи в реальном времени
+```
+
+### Обновление бота
+```bash
+scp manicure_bot.zip root@IP:/root/
+ssh root@IP
+unzip -o manicure_bot.zip -d manicure_bot
+systemctl restart manicure_bot
+```
 
 ---
 
@@ -8,121 +122,29 @@
 
 ```
 manicure_bot/
-├── bot.py                   # Точка входа — запуск бота
-├── config.py                # Конфигурация (токен, ID администратора, каналы)
-├── requirements.txt
-│
+├── bot.py
+├── config.py
 ├── database/
-│   ├── __init__.py
-│   └── db.py                # Все операции с SQLite (aiosqlite)
-│
+│   └── db.py
 ├── handlers/
-│   ├── __init__.py
-│   ├── common.py            # /start, прайсы, портфолио, проверка подписки
-│   ├── user.py              # Запись клиентов, отмена, мои записи
-│   └── admin.py             # Панель администратора
-│
+│   ├── common.py
+│   ├── user.py
+│   └── admin.py
 ├── keyboards/
-│   ├── __init__.py
-│   ├── user_kb.py           # Клавиатуры для пользователей
-│   └── admin_kb.py          # Клавиатуры для администратора
-│
+│   ├── user_kb.py
+│   └── admin_kb.py
 ├── states/
-│   ├── __init__.py
-│   └── states.py            # FSM-состояния (BookingStates, AdminStates)
-│
-└── utils/
-    ├── __init__.py
-    ├── calendar_kb.py       # Генератор инлайн-календаря
-    └── scheduler.py         # APScheduler: напоминания за 24 ч
+│   └── states.py
+├── utils/
+│   ├── calendar_kb.py
+│   ├── admin_calendar.py
+│   └── scheduler.py
+└── middlewares/
 ```
 
 ---
 
-## ⚙️ Функционал
-
-### Пользователь
-- 📅 **Записаться** — выбор даты через инлайн-календарь → выбор времени → ввод имени и телефона → подтверждение
-- 📋 **Мои записи** — просмотр и отмена своей записи
-- 💅 **Прайсы** — Французский маникюр 1000₽ / Квадрат 500₽
-- 🖼 **Портфолио** — ссылка на Pinterest
-- ✅ Один пользователь = одна запись одновременно
-- 🔔 Автонапоминание за 24 часа до визита
-
-### Проверка подписки
-- Перед записью проверяется подписка на канал
-- Кнопки: «Подписаться» (ссылка) + «Проверить подписку»
-
-### Администратор (`/admin`)
-- 📅 Добавить рабочий день (с дефолтными слотами)
-- ⏰ Добавить / 🗑 удалить временные слоты
-- 🔒 Закрыть / 🔓 открыть день
-- 📋 Просмотр расписания на дату с данными клиентов
-- ❌ Отменить запись по ID
-
----
-
-## 🛠 Установка и запуск
-
-### 1. Клонирование / скачивание файлов
-
-```bash
-# Создайте папку и скопируйте все файлы проекта
-mkdir manicure_bot && cd manicure_bot
-```
-
-### 2. Создание виртуального окружения
-
-```bash
-python -m venv venv
-
-# Linux / macOS
-source venv/bin/activate
-
-# Windows
-venv\Scripts\activate
-```
-
-### 3. Установка зависимостей
-
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Настройка config.py
-
-Откройте `config.py` и заполните:
-
-```python
-BOT_TOKEN = "1234567890:ABCDefgh..."   # Токен от @BotFather
-ADMIN_ID  = 123456789                   # Ваш Telegram ID (узнать у @userinfobot)
-CHANNEL_ID   = "@your_channel"          # Username канала для подписки
-CHANNEL_LINK = "https://t.me/your_channel"
-SCHEDULE_CHANNEL_ID = "@your_schedule"  # Канал для публикации расписания
-```
-
-> ⚠️ Бот должен быть **администратором** в `SCHEDULE_CHANNEL_ID`
-> ⚠️ Для проверки подписки бот должен быть администратором в `CHANNEL_ID`
-
-### 5. Запуск
-
-```bash
-python bot.py
-```
-
----
-
-## 🗓 Как начать работу (первые шаги)
-
-1. Запустите бота
-2. Отправьте `/admin` в чат с ботом
-3. Нажмите **«📅 Добавить рабочий день»** и введите дату (например `20.01.2026`)
-4. Бот автоматически добавит слоты: 10:00, 11:00 ... 18:00
-5. Пользователи могут записываться через `/start`
-
----
-
-## 📦 requirements.txt
+## 📦 Зависимости
 
 ```
 aiogram==3.13.1
@@ -132,32 +154,14 @@ APScheduler==3.10.4
 
 ---
 
-## 🔐 Переменные окружения (опционально)
+## 🔐 Безопасность
 
-Для безопасности можно вынести токен в `.env`:
-
-```bash
-pip install python-dotenv
-```
-
+Не публикуйте токен в открытом репозитории. Используйте переменные окружения:
 ```python
-# config.py
-from dotenv import load_dotenv
 import os
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+ADMIN_ID  = int(os.getenv("ADMIN_ID", "0"))
 ```
-
-```env
-# .env
-BOT_TOKEN=your_token_here
-```
-
----
-
-## 🔄 Работа APScheduler после перезапуска
-
-При каждом старте бота `restore_jobs()` читает все будущие записи из БД и восстанавливает задачи напоминаний. Задачи хранятся в памяти — при перезапуске восстанавливаются автоматически.
 
 ---
 

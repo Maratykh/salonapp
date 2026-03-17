@@ -9,7 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
 from states.states import AdminStates
 
-from config import ADMIN_ID, SLOT_DURATION
+from config import ADMIN_ID, ADMIN_IDS, SLOT_DURATION
 from database.db import (
     add_slot, remove_slot, close_day, open_day,
     get_slots_for_date, get_schedule_for_date, get_available_dates,
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 def is_admin(user_id: int) -> bool:
-    return user_id == ADMIN_ID
+    return user_id in ADMIN_IDS
 
 
 def get_admin_calendar(action: str, available: list):

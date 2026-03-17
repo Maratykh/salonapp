@@ -7,7 +7,7 @@ from aiogram import Router, Bot, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
-from config import ADMIN_ID, SCHEDULE_CHANNEL_ID, SLOT_DURATION
+from config import ADMIN_ID, ADMIN_IDS, SCHEDULE_CHANNEL_ID, SLOT_DURATION
 from config import MSG_BOOKING_CREATED, STUDIO_NAME
 from database.db import (
     get_available_dates, get_free_slots, get_free_slots_for_service,
@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def main_menu_kb(user_id: int = 0):
-    return _main_menu_kb(is_admin=(user_id == ADMIN_ID))
+    return _main_menu_kb(is_admin=(user_id in ADMIN_IDS))
 
 
 def format_date_ru(date_str: str) -> str:
@@ -332,8 +332,7 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
     try:
         username_line = f"@{user.username}" if user.username else f'<a href="tg://user?id={user.id}">профиль</a>'
-        await bot.send_message(
-            ADMIN_ID,
+        text = (
             f"🔔 <b>Новая запись!</b>\n\n"
             f"📅 {format_date_ru(data['selected_date'])}\n"
             f"🕐 {data['selected_time']} – {data['end_time']}\n"
@@ -343,6 +342,11 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot: Bot):
             f"✈️ {username_line}\n"
             f"ID: <code>{appt_id}</code>"
         )
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(admin_id, text)
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"Уведомление мастеру: {e}")
 
@@ -405,12 +409,16 @@ async def user_cancel_appointment(callback: CallbackQuery, bot: Bot):
         reply_markup=main_menu_kb(callback.from_user.id)
     )
     try:
-        await bot.send_message(
-            ADMIN_ID,
+        text = (
             f"⚠️ <b>Клиент отменил запись</b>\n\n"
             f"{format_date_ru(result['date'])}, {result['time_slot']}\n"
             f"@{callback.from_user.username or 'нет'} (ID: {callback.from_user.id})"
         )
+        for admin_id in ADMIN_IDS:
+            try:
+                await bot.send_message(admin_id, text)
+            except Exception:
+                pass
     except Exception as e:
         logger.warning(f"Уведомление: {e}")
     await post_schedule_to_channel(bot, result["date"])
