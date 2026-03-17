@@ -14,9 +14,10 @@ from database.db import (
     add_slot, remove_slot, close_day, open_day,
     get_slots_for_date, get_schedule_for_date, get_available_dates,
     cancel_appointment, get_stats_month, get_stats_alltime,
-    create_manual_appointment, get_free_slots, add_working_day,
+    create_manual_appointment, get_free_slots, get_free_slots_for_service, add_working_day,
     get_services, get_service_by_key, add_service, update_service, toggle_service,
-    get_setting, set_setting, mark_attendance, save_job_ids
+    get_setting, set_setting, mark_attendance, save_job_ids,
+    reschedule_appointment, get_appointment_by_id
 )
 from keyboards.admin_kb import (
     admin_menu_kb, admin_back_kb, admin_settings_kb, admin_stats_kb,
@@ -25,7 +26,7 @@ from keyboards.admin_kb import (
     weekday_picker_kb, admin_services_kb, admin_service_detail_kb
 )
 from utils.admin_calendar import build_admin_calendar
-from utils.scheduler import cancel_all_jobs
+from utils.scheduler import cancel_all_jobs, schedule_all_jobs
 from handlers.user import format_date_ru, post_schedule_to_channel
 
 router = Router()
@@ -493,6 +494,111 @@ async def admin_cancel_from_schedule(callback: CallbackQuery, bot: Bot):
             logger.warning(f"Уведомление: {e}")
     await post_schedule_to_channel(bot, date_str)
     await send_schedule(callback, date_str)
+
+
+# ================================================================
+# Перенос записи
+# ================================================================
+
+@router.callback_query(F.data.startswith("adm_reschedule_"))
+async def admin_reschedule_start(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    appt_id = int(callback.data.removeprefix("adm_reschedule_"))
+    await state.update_data(reschedule_appt_id=appt_id)
+    await state.set_state(AdminStates.reschedule_date)
+    available = await get_available_dates()
+    kb = get_admin_calendar("reschedule", available)
+    await callback.message.edit_text(
+        "<b>Перенос записи</b>\n\nВыберите новую дату:",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm_cal_day_reschedule_"), AdminStates.reschedule_date)
+async def admin_reschedule_date_picked(callback: CallbackQuery, state: FSMContext):
+    date_str = callback.data.removeprefix("adm_cal_day_reschedule_")
+    data = await state.get_data()
+    appt_id = data["reschedule_appt_id"]
+
+    # Получаем слоты нужной длины для услуги
+    appt = await get_appointment_by_id(appt_id)
+    if not appt:
+        await callback.answer("Запись не найдена", show_alert=True)
+        await state.clear()
+        return
+
+    free = await get_free_slots_for_service(date_str, appt["slots_count"])
+    if not free:
+        await callback.answer("Нет свободных слотов на эту дату", show_alert=True)
+        return
+
+    await state.update_data(reschedule_new_date=date_str)
+    await state.set_state(AdminStates.reschedule_time)
+    await callback.message.edit_text(
+        f"<b>Перенос записи</b>\n\n"
+        f"Новая дата: <b>{format_date_ru(date_str)}</b>\n\n"
+        f"Выберите время:",
+        reply_markup=manual_free_slots_kb(date_str, free)
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("manual_slot_"), AdminStates.reschedule_time)
+async def admin_reschedule_time_picked(callback: CallbackQuery, state: FSMContext, bot: Bot):
+    new_time = callback.data.removeprefix("manual_slot_")
+    data = await state.get_data()
+    appt_id = data["reschedule_appt_id"]
+    new_date = data["reschedule_new_date"]
+    await state.clear()
+
+    result = await reschedule_appointment(appt_id, new_date, new_time)
+    if not result:
+        await callback.message.edit_text(
+            "❌ Не удалось перенести — слот уже занят.",
+            reply_markup=admin_menu_kb()
+        )
+        await callback.answer()
+        return
+
+    # Отменяем старые задачи планировщика
+    cancel_all_jobs(appt_id, result)
+
+    # Уведомляем клиента
+    if result["user_id"] != 0:
+        try:
+            h, m = map(int, new_time.split(":"))
+            end_total = h * 60 + m + result["slots_count"] * SLOT_DURATION
+            end_time = f"{end_total // 60:02d}:{end_total % 60:02d}"
+            await bot.send_message(
+                result["user_id"],
+                f"📅 <b>Ваша запись перенесена</b>\n\n"
+                f"Было: {format_date_ru(result['old_date'])}, {result['old_slot']}\n"
+                f"Стало: <b>{format_date_ru(new_date)}, {new_time} – {end_time}</b>"
+            )
+        except Exception as e:
+            logger.warning(f"Уведомление о переносе: {e}")
+
+    # Планируем новые задачи
+    await schedule_all_jobs(
+        bot=bot, appointment_id=appt_id, user_id=result["user_id"],
+        date_str=new_date, time_slot=new_time,
+        service_key="", service_name=result["service_name"],
+        slots_count=result["slots_count"], client_name=result["client_name"],
+    )
+
+    await callback.message.edit_text(
+        f"✅ <b>Запись перенесена!</b>\n\n"
+        f"👤 {result['client_name']}\n"
+        f"Было: {format_date_ru(result['old_date'])}, {result['old_slot']}\n"
+        f"Стало: <b>{format_date_ru(new_date)}, {new_time}</b>",
+        reply_markup=admin_menu_kb()
+    )
+    await post_schedule_to_channel(bot, result["old_date"])
+    await post_schedule_to_channel(bot, new_date)
+    await callback.answer()
 
 
 # ================================================================

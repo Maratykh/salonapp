@@ -131,9 +131,13 @@ def admin_schedule_kb(date_str: str, slots: list, page: int = 0) -> InlineKeyboa
     for s in page_items:
         svc = f" ({s['service_name']})" if s.get("service_name") else ""
         builder.row(InlineKeyboardButton(
-            text=f"🔴 {s['time']} — {s['client_name']}{svc}  ✕",
-            callback_data=f"adm_cancel_{s['appt_id']}"
+            text=f"🔴 {s['time']} — {s['client_name']}{svc}",
+            callback_data="admin_ignore"
         ))
+        builder.row(
+            InlineKeyboardButton(text="📅 Перенести", callback_data=f"adm_reschedule_{s['appt_id']}"),
+            InlineKeyboardButton(text="✕ Отменить",  callback_data=f"adm_cancel_{s['appt_id']}"),
+        )
 
     if not unique:
         builder.row(InlineKeyboardButton(text="— записей нет —", callback_data="admin_ignore"))

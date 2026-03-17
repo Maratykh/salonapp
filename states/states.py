@@ -24,6 +24,9 @@ class AdminStates(StatesGroup):
     manual_service = State()
     manual_name    = State()
     manual_confirm = State()
+    # Перенос записи
+    reschedule_date = State()
+    reschedule_time = State()
     # Управление услугами
     svc_name       = State()
     svc_price      = State()

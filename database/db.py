@@ -468,11 +468,97 @@ async def cancel_appointment(appointment_id: int) -> dict | None:
             "master_job_id": master_job_id}
 
 
+async def get_appointment_by_id(appointment_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id, user_id, date, time_slot, client_name, service_name, "
+            "service_key, slots_count FROM appointments WHERE id=?",
+            (appointment_id,)
+        )
+        row = await cur.fetchone()
+    if not row:
+        return None
+    return {"id": row[0], "user_id": row[1], "date": row[2], "time_slot": row[3],
+            "client_name": row[4], "service_name": row[5],
+            "service_key": row[6], "slots_count": row[7] or 1}
+
+
 async def cancel_appointment_by_user(user_id: int) -> dict | None:
     appt = await get_user_appointment(user_id)
     if not appt:
         return None
     return await cancel_appointment(appt["id"])
+
+
+async def reschedule_appointment(appointment_id: int, new_date: str, new_time_slot: str) -> dict | None:
+    """Перенести запись на новую дату и время. Возвращает dict с old/new данными или None при ошибке."""
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("BEGIN EXCLUSIVE")
+            # Получаем текущую запись
+            cur = await db.execute(
+                "SELECT user_id, date, time_slot, slots_count, reminder_job_id, "
+                "repeat_job_id, master_job_id, client_name, service_name "
+                "FROM appointments WHERE id=?", (appointment_id,)
+            )
+            row = await cur.fetchone()
+            if not row:
+                await db.execute("ROLLBACK")
+                return None
+            user_id, old_date, old_slot, slots_count, reminder_job_id, \
+                repeat_job_id, master_job_id, client_name, service_name = row
+            slots_count = slots_count or 1
+
+            # Проверяем что новые слоты свободны
+            h, m = map(int, new_time_slot.split(":"))
+            for i in range(slots_count):
+                total = h * 60 + m + i * SLOT_DURATION
+                slot = f"{total // 60:02d}:{total % 60:02d}"
+                cur = await db.execute(
+                    "SELECT is_booked, is_closed FROM schedule WHERE date=? AND time_slot=?",
+                    (new_date, slot)
+                )
+                r = await cur.fetchone()
+                if not r or r[0] == 1 or r[1] == 1:
+                    await db.execute("ROLLBACK")
+                    return None
+
+            # Освобождаем старые слоты
+            oh, om = map(int, old_slot.split(":"))
+            for i in range(slots_count):
+                total = oh * 60 + om + i * SLOT_DURATION
+                slot = f"{total // 60:02d}:{total % 60:02d}"
+                await db.execute(
+                    "UPDATE schedule SET is_booked=0 WHERE date=? AND time_slot=?",
+                    (old_date, slot)
+                )
+
+            # Занимаем новые слоты
+            for i in range(slots_count):
+                total = h * 60 + m + i * SLOT_DURATION
+                slot = f"{total // 60:02d}:{total % 60:02d}"
+                await db.execute(
+                    "UPDATE schedule SET is_booked=1 WHERE date=? AND time_slot=?",
+                    (new_date, slot)
+                )
+
+            # Обновляем запись
+            await db.execute(
+                "UPDATE appointments SET date=?, time_slot=? WHERE id=?",
+                (new_date, new_time_slot, appointment_id)
+            )
+            await db.execute("COMMIT")
+
+        return {
+            "user_id": user_id, "slots_count": slots_count,
+            "old_date": old_date, "old_slot": old_slot,
+            "new_date": new_date, "new_slot": new_time_slot,
+            "reminder_job_id": reminder_job_id, "repeat_job_id": repeat_job_id,
+            "master_job_id": master_job_id,
+            "client_name": client_name, "service_name": service_name,
+        }
+    except Exception:
+        return None
 
 
 async def save_job_ids(appointment_id: int, reminder_job_id: str = None,
