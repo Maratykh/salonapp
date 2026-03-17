@@ -5,8 +5,11 @@
 import os
 
 # ---- Telegram ----
-BOT_TOKEN    = os.getenv("BOT_TOKEN", "")
-ADMIN_ID     = int(os.getenv("ADMIN_ID", "0"))
+BOT_TOKEN  = os.getenv("BOT_TOKEN", "")
+# Несколько админов через запятую: "123456,789012"
+_admin_ids = os.getenv("ADMIN_IDS", os.getenv("ADMIN_ID", "0"))
+ADMIN_IDS  = [int(x.strip()) for x in _admin_ids.split(",") if x.strip()]
+ADMIN_ID   = ADMIN_IDS[0] if ADMIN_IDS else 0  # первый — главный (для обратной совместимости)
 CHANNEL_ID   = "@manicur1234"
 CHANNEL_LINK = "https://t.me/manicur1234"
 SCHEDULE_CHANNEL_ID = "@manicur1234"
@@ -24,30 +27,64 @@ PORTFOLIO_LINK = "https://www.instagram.com/oy_brow_pmu/"
 PORTFOLIO_BUTTON_TEXT = "📸 Смотреть в Instagram"
 # ---- Студия ----
 STUDIO_NAME    = "Oy_Brow_Pmu"
-STUDIO_ADDRESS = "г. Островец, ул. Школьная, 1"
-STUDIO_MAPS_LINK = "https://maps.app.goo.gl/p3zPtnXfMfPQ6MVR7"  # ссылка на карту
+STUDIO_ADDRESS   = "г. Островец, ул. Школьная, 3 к1"
+STUDIO_MAPS_LINK = "https://maps.app.goo.gl/eNa2Mo9VSnmeKL626"
 
 # ---- Услуги по умолчанию (загружаются в БД при первом запуске) ----
-# Можно менять прямо через админ-панель — этот список нужен только для
-# первичного заполнения БД.
 DEFAULT_SERVICES = [
     {
         "key":          "brows",
         "name":         "Брови",
         "price":        35,
-        "slots":        1,        # 1 × 30 мин = 30 мин
-        "duration_str": "~30 мин",
+        "slots":        2,        # 2 × 30 мин = ~45 мин
+        "duration_str": "~45 мин",
         "emoji":        "✏️",
-        "repeat_days":  21,       # напомнить через 3 недели
+        "repeat_days":  21,
     },
     {
-        "key":          "perm",
-        "name":         "Перманентный макияж",
+        "key":          "brows_styling",
+        "name":         "Долговременная укладка бровей",
+        "price":        45,
+        "slots":        2,        # 2 × 30 мин = 1 час
+        "duration_str": "~1 час",
+        "emoji":        "✨",
+        "repeat_days":  30,
+    },
+    {
+        "key":          "makeup_15h",
+        "name":         "Макияж",
+        "price":        75,
+        "slots":        3,        # 3 × 30 мин = 1.5 часа
+        "duration_str": "~1.5 часа",
+        "emoji":        "💋",
+        "repeat_days":  0,
+    },
+    {
+        "key":          "perm_2h",
+        "name":         "Перманентный макияж (2 часа)",
+        "price":        200,
+        "slots":        4,        # 4 × 30 мин = 2 часа
+        "duration_str": "~2 часа",
+        "emoji":        "💄",
+        "repeat_days":  30,
+    },
+    {
+        "key":          "perm_3h",
+        "name":         "Перманентный макияж (3 часа)",
         "price":        200,
         "slots":        6,        # 6 × 30 мин = 3 часа
         "duration_str": "~3 часа",
         "emoji":        "💄",
-        "repeat_days":  35,       # напомнить через 5 недель
+        "repeat_days":  30,
+    },
+    {
+        "key":          "perm_correction",
+        "name":         "Коррекция перманента",
+        "price":        100,
+        "slots":        4,        # 4 × 30 мин = 2 часа
+        "duration_str": "~2 часа",
+        "emoji":        "🔧",
+        "repeat_days":  0,
     },
 ]
 
