@@ -163,6 +163,10 @@ async def toggle_dense(callback: CallbackQuery):
     dense_on  = await get_setting("dense_schedule") == "1"
     await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on))
     await callback.answer("Плотное расписание: " + ("включено ✅" if dense_on else "выключено ❌"))
+
+
+@router.callback_query(F.data == "toggle_master_30min")
+async def toggle_master(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return

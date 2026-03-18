@@ -11,7 +11,7 @@ from config import ADMIN_ID, ADMIN_IDS, SCHEDULE_CHANNEL_ID, SLOT_DURATION
 from config import MSG_BOOKING_CREATED, STUDIO_NAME
 from database.db import (
     get_available_dates, get_free_slots, get_free_slots_for_service,
-    create_appointment, get_user_appointment,
+    get_slots_for_date, create_appointment, get_user_appointment,
     get_appointments_for_date, get_services, get_service_by_key, get_setting
 )
 from keyboards.user_kb import (
@@ -204,28 +204,17 @@ async def select_service(callback: CallbackQuery, state: FSMContext):
     if dense == "1":
         booked = await get_appointments_for_date(data["selected_date"])
         if booked:
-            # Собираем все занятые слоты с учётом длительности
-            occupied = set()
-            for appt in booked:
-                h, m = map(int, appt["time"].split(":"))
-                # Получаем slots_count из расписания (берём 1 если нет)
-                for i in range(12):  # максимум 12 × 15 мин = 3 часа
-                    total = h * 60 + m + i * SLOT_DURATION
-                    slot = f"{total // 60:02d}:{total % 60:02d}"
-                    if slot in set(available_slots) or slot not in set(available_slots):
-                        occupied.add(slot)
-                    else:
-                        break
+            # Получаем реально занятые слоты из расписания
+            all_slots = await get_slots_for_date(data["selected_date"])
+            occupied = {s["time"] for s in all_slots if s["is_booked"]}
 
-            # Оставляем только слоты вплотную к занятым
+            # Оставляем только свободные слоты вплотную к занятому блоку
             dense_slots = []
-            free_set = set(available_slots)
             for slot in available_slots:
                 h, m = map(int, slot.split(":"))
-                # Слот прямо перед или сразу после занятого блока
                 prev_total = h * 60 + m - SLOT_DURATION
                 prev_slot = f"{prev_total // 60:02d}:{prev_total % 60:02d}"
-                if prev_slot in occupied or slot in occupied:
+                if prev_slot in occupied:
                     dense_slots.append(slot)
             if dense_slots:
                 available_slots = dense_slots
