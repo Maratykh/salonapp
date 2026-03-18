@@ -19,6 +19,7 @@ DB_PATH = "manicure_bot.db"
 
 # ---- Расписание ----
 SLOT_DURATION = 15   # длительность одного слота в минутах
+TIMEZONE      = "Europe/Minsk"  # таймзона мастера (Europe/Moscow, Europe/Minsk, Asia/Almaty и т.д.)
 
 # ---- Портфолио ----
 PORTFOLIO_LINK = "https://www.instagram.com/oy_brow_pmu/"

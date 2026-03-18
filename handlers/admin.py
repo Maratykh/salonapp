@@ -1,5 +1,6 @@
 # handlers/admin.py
 
+import asyncio
 import logging
 from datetime import datetime, date, timedelta
 
@@ -474,6 +475,14 @@ async def admin_manual_confirm(callback: CallbackQuery, state: FSMContext, bot: 
         reply_markup=admin_menu_kb()
     )
     await post_schedule_to_channel(bot, data["manual_date"])
+    await schedule_all_jobs(
+        bot=bot, appointment_id=appt_id, user_id=0,
+        date_str=data["manual_date"], time_slot=data["manual_time"],
+        service_key=data.get("manual_service_key", ""),
+        service_name=data.get("manual_service_name", ""),
+        slots_count=data.get("manual_service_slots", 1),
+        client_name=data["manual_name"],
+    )
     await callback.answer()
 
 
@@ -691,7 +700,7 @@ async def svc_edit(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         f"<b>{svc['emoji']} {svc['name']}</b>\n\n"
         f"💰 Цена: {svc['price']} руб.\n"
-        f"⏱ Длительность: {svc['duration_str']} ({svc['slots']} слотов по {30} мин)\n"
+        f"⏱ Длительность: {svc['duration_str']} ({svc['slots']} слотов по {SLOT_DURATION} мин)\n"
         f"🔁 Напомнить через: {repeat_str}\n"
         f"Статус: {'✅ активна' if svc['is_active'] else '❌ отключена'}",
         reply_markup=admin_service_detail_kb(svc_id, svc["is_active"])
@@ -715,7 +724,7 @@ async def svc_toggle(callback: CallbackQuery, state: FSMContext):
         await callback.message.edit_text(
             f"<b>{svc['emoji']} {svc['name']}</b>\n\n"
             f"💰 Цена: {svc['price']} руб.\n"
-            f"⏱ Длительность: {svc['duration_str']} ({svc['slots']} слотов по 30 мин)\n"
+            f"⏱ Длительность: {svc['duration_str']} ({svc['slots']} слотов по {SLOT_DURATION} мин)\n"
             f"🔁 Напомнить через: {repeat_str}\n"
             f"Статус: {'✅ активна' if svc['is_active'] else '❌ отключена'}",
             reply_markup=admin_service_detail_kb(svc_id, svc["is_active"])
@@ -735,7 +744,7 @@ async def svc_field_edit(callback: CallbackQuery, state: FSMContext):
     prompts = {
         "name":   ("AdminStates.svc_name",   "Введите новое <b>название</b> услуги:"),
         "price":  ("AdminStates.svc_price",  "Введите новую <b>цену</b> (только число):"),
-        "slots":  ("AdminStates.svc_slots",  "Введите <b>количество слотов</b> по 30 мин\n(1=30мин, 2=1час, 6=3часа):"),
+        "slots":  ("AdminStates.svc_slots",  f"Введите <b>количество слотов</b> по {SLOT_DURATION} мин\n(1={SLOT_DURATION}мин, 2={SLOT_DURATION*2}мин, {60//SLOT_DURATION}={60}мин):"),
         "emoji":  ("AdminStates.svc_emoji",  "Введите <b>эмодзи</b> для услуги:"),
         "repeat": ("AdminStates.svc_repeat", "Через сколько <b>дней</b> напомнить о коррекции?\n(0 — не напоминать):"),
     }
@@ -773,7 +782,7 @@ async def _save_svc_field(message: Message, state: FSMContext, field: str, value
     }
     if field == "slots":
         kwargs["slots"] = value
-        kwargs["duration_str"] = f"~{value * 30} мин" if value * 30 < 60 else f"~{value * 30 // 60} ч"
+        kwargs["duration_str"] = f"~{value * SLOT_DURATION} мин" if value * SLOT_DURATION < 60 else f"~{value * SLOT_DURATION // 60} ч"
     else:
         kwargs[field] = value
     await update_service(svc_id, **kwargs)
@@ -800,7 +809,7 @@ async def svc_add_start(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Нет доступа", show_alert=True)
         return
     await state.update_data(edit_svc_id=None, adding_new=True,
-                             new_svc={"emoji":"💅","price":0,"slots":1,"duration_str":"~30 мин","repeat_days":0})
+                             new_svc={"emoji":"💅","price":0,"slots":1,"duration_str":f"~{SLOT_DURATION} мин","repeat_days":0})
     await state.set_state(AdminStates.svc_name)
     await callback.message.edit_text(
         "<b>Новая услуга</b>\n\nВведите <b>название</b>:", reply_markup=admin_back_kb()
@@ -851,7 +860,7 @@ async def svc_new_price(message: Message, state: FSMContext):
         await state.update_data(new_svc=new_svc)
         await state.set_state(AdminStates.svc_slots)
         await message.answer(
-            f"Цена: <b>{price} руб.</b>\n\nВведите <b>кол-во слотов</b> по 30 мин\n(1=30мин, 2=1час, 6=3часа):",
+            f"Цена: <b>{price} руб.</b>\n\nВведите <b>кол-во слотов</b> по {SLOT_DURATION} мин\n(1={SLOT_DURATION}мин, {60//SLOT_DURATION}=1час):",
             reply_markup=admin_back_kb()
         )
         return
@@ -877,7 +886,7 @@ async def svc_new_slots(message: Message, state: FSMContext):
             return
         new_svc = data.get("new_svc", {})
         new_svc["slots"] = slots
-        new_svc["duration_str"] = f"~{slots*30} мин" if slots*30 < 60 else f"~{slots*30//60} ч"
+        new_svc["duration_str"] = f"~{slots*SLOT_DURATION} мин" if slots*SLOT_DURATION < 60 else f"~{slots*SLOT_DURATION//60} ч"
         await state.update_data(new_svc=new_svc)
         await state.set_state(AdminStates.svc_repeat)
         await message.answer(
@@ -987,12 +996,31 @@ async def admin_cal_day(callback: CallbackQuery, state: FSMContext, bot: Bot):
         await state.set_state(AdminStates.remove_slot_time)
 
     elif action == "close":
+        # Получаем записи на этот день перед закрытием
+        booked_slots = await get_schedule_for_date(date_str)
+        seen = set()
+        booked_appts = [s for s in booked_slots if s["is_booked"] and s["appt_id"]
+                        and not seen.add(s["appt_id"])]
+
         await close_day(date_str)
         await state.clear()
         await callback.message.edit_text(
             f"<b>День закрыт</b>\n\n{format_date_ru(date_str)}", reply_markup=admin_menu_kb()
         )
         await post_schedule_to_channel(bot, date_str)
+
+        # Уведомляем клиентов у которых есть записи
+        for appt in booked_appts:
+            if appt["user_id"] and appt["user_id"] != 0:
+                try:
+                    await bot.send_message(
+                        appt["user_id"],
+                        f"⚠️ <b>Ваша запись отменена</b>\n\n"
+                        f"К сожалению, {format_date_ru(date_str)} мастер не работает.\n"
+                        f"Пожалуйста, запишитесь на другое время.",
+                    )
+                except Exception as e:
+                    logger.warning(f"Уведомление при закрытии дня: {e}")
 
     elif action == "open":
         await open_day(date_str)
@@ -1265,6 +1293,7 @@ async def admin_broadcast_send(callback: CallbackQuery, state: FSMContext, bot: 
             sent += 1
         except Exception:
             failed += 1
+        await asyncio.sleep(0.05)  # 20 сообщений/сек — лимит Telegram
 
     await callback.message.edit_text(
         f"📣 <b>Рассылка завершена</b>\n\n"

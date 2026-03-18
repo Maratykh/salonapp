@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta
+import pytz
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.jobstores.memory import MemoryJobStore
@@ -12,7 +13,7 @@ from database.db import (
     get_setting, get_service_by_key
 )
 from config import ADMIN_ID, ADMIN_IDS, SLOT_DURATION, MSG_REMINDER_24H, MSG_REPEAT_REMINDER, MSG_MASTER_30MIN
-from config import STUDIO_NAME, STUDIO_ADDRESS
+from config import STUDIO_NAME, STUDIO_ADDRESS, TIMEZONE
 
 logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
@@ -22,11 +23,19 @@ def get_scheduler() -> AsyncIOScheduler:
     return _scheduler
 
 
+def now_local() -> datetime:
+    """Текущее время в таймзоне мастера."""
+    tz = pytz.timezone(TIMEZONE)
+    return datetime.now(tz).replace(tzinfo=None)
+
+
 async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     global _scheduler
+    tz = pytz.timezone(TIMEZONE)
     _scheduler = AsyncIOScheduler(
         jobstores={"default": MemoryJobStore()},
         job_defaults={"misfire_grace_time": 3600},
+        timezone=tz,
     )
     _scheduler.start()
     return _scheduler
@@ -34,7 +43,7 @@ async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
 
 async def restore_jobs(bot: Bot, scheduler: AsyncIOScheduler):
     appointments = await get_all_future_appointments()
-    now = datetime.now()
+    now = now_local()
     for appt in appointments:
         visit_dt = datetime.strptime(f"{appt['date']} {appt['time_slot']}", "%Y-%m-%d %H:%M")
 
@@ -85,7 +94,7 @@ async def schedule_all_jobs(
     if not scheduler:
         return
 
-    now = datetime.now()
+    now = now_local()
     visit_dt = datetime.strptime(f"{date_str} {time_slot}", "%Y-%m-%d %H:%M")
 
     reminder_job_id = None
