@@ -388,13 +388,13 @@ async def admin_manual_time_picked(callback: CallbackQuery, state: FSMContext):
         return
     time_slot = callback.data.removeprefix("manual_slot_")
     await state.update_data(manual_time=time_slot)
-    await state.set_state(AdminStates.manual_service)
+    await state.set_state(AdminStates.manual_name)
     data = await state.get_data()
-    services = await get_services(active_only=True)
     await callback.message.edit_text(
         f"Дата: <b>{format_date_ru(data['manual_date'])}</b>\n"
-        f"Время: <b>{time_slot}</b>\n\nВыберите услугу:",
-        reply_markup=manual_services_kb(services)
+        f"Услуга: <b>{data['manual_service_name']}</b>\n"
+        f"Время: <b>{time_slot}</b>\n\nВведите имя клиента:",
+        reply_markup=admin_back_kb()
     )
     await callback.answer()
 
@@ -410,13 +410,18 @@ async def admin_manual_service_picked(callback: CallbackQuery, state: FSMContext
         manual_service_key=service_key, manual_service_name=svc["name"],
         manual_service_price=svc["price"], manual_service_slots=svc["slots"],
     )
-    await state.set_state(AdminStates.manual_name)
     data = await state.get_data()
+    free = await get_free_slots_for_service(data["manual_date"], svc["slots"])
+    if not free:
+        await callback.answer(
+            f"Нет свободного окна для «{svc['name']}» ({svc['duration_str']}) на эту дату.",
+            show_alert=True
+        )
+        return
     await callback.message.edit_text(
         f"Дата: <b>{format_date_ru(data['manual_date'])}</b>\n"
-        f"Время: <b>{data['manual_time']}</b>\n"
-        f"Услуга: <b>{svc['name']}</b>\n\nВведите имя клиента:",
-        reply_markup=admin_back_kb()
+        f"Услуга: <b>{svc['name']}</b> ({svc['duration_str']})\n\nВыберите время:",
+        reply_markup=manual_free_slots_kb(data["manual_date"], free)
     )
     await callback.answer()
 
@@ -1004,9 +1009,10 @@ async def admin_cal_day(callback: CallbackQuery, state: FSMContext, bot: Bot):
             return
         await state.update_data(manual_date=date_str)
         await state.set_state(AdminStates.manual_service)
+        services = await get_services(active_only=True)
         await callback.message.edit_text(
-            f"<b>Записать клиента</b>\n\nДата: <b>{format_date_ru(date_str)}</b>\n\nВыберите время:",
-            reply_markup=manual_free_slots_kb(date_str, free)
+            f"<b>Записать клиента</b>\n\nДата: <b>{format_date_ru(date_str)}</b>\n\nВыберите услугу:",
+            reply_markup=manual_services_kb(services)
         )
 
     await callback.answer()
