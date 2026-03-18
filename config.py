@@ -17,7 +17,9 @@ SCHEDULE_CHANNEL_ID = "@manicur1234"
 # ---- База данных ----
 DB_PATH = "manicure_bot.db"
 
-# ---- Расписание ----
+# ---- Демо-режим ----
+DEMO_MODE         = False   # True = демо для показа мастерам
+DEMO_CONTACT      = "@ваш_username"  # куда вести кнопку "Хочу такого бота"
 SLOT_DURATION = 15   # длительность одного слота в минутах
 TIMEZONE      = "Europe/Minsk"  # таймзона мастера (Europe/Moscow, Europe/Minsk, Asia/Almaty и т.д.)
 

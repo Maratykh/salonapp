@@ -8,7 +8,7 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 
 from config import ADMIN_ID, ADMIN_IDS, SCHEDULE_CHANNEL_ID, SLOT_DURATION
-from config import MSG_BOOKING_CREATED, STUDIO_NAME
+from config import MSG_BOOKING_CREATED, STUDIO_NAME, DEMO_MODE, DEMO_CONTACT
 from database.db import (
     get_available_dates, get_free_slots, get_free_slots_for_service,
     get_slots_for_date, create_appointment, get_user_appointment,
@@ -325,6 +325,30 @@ async def enter_phone(message: Message, state: FSMContext):
 async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data()
     user = callback.from_user
+
+    # ---- Демо-режим ----
+    if DEMO_MODE:
+        await state.clear()
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Хочу такого бота!", url=f"https://t.me/{DEMO_CONTACT.lstrip('@')}")],
+            [InlineKeyboardButton(text="🏠 В главное меню", callback_data="main_menu")],
+        ])
+        await callback.message.edit_text(
+            f"🎭 <b>Демо-режим</b>\n\n"
+            f"В реальном боте здесь бы создалась запись:\n\n"
+            f"📅 {format_date_ru(data['selected_date'])}\n"
+            f"🕐 {data['selected_time']} – {data['end_time']}\n"
+            f"{data['service_emoji']} {data['service_name']} — {data['service_price']} руб.\n"
+            f"👤 {data['client_name']}\n"
+            f"📞 {data['phone']}\n\n"
+            f"Клиент получил бы подтверждение и напоминание за 24 часа.\n"
+            f"Мастер получил бы уведомление с контактами клиента.\n\n"
+            f"Хотите такого бота для своей студии? 👇",
+            reply_markup=kb
+        )
+        await callback.answer()
+        return
+    # ---- Конец демо-режима ----
 
     appt_id = await create_appointment(
         user_id=user.id, username=user.username or "",

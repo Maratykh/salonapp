@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 
-from config import ADMIN_ID, ADMIN_IDS, STUDIO_NAME, STUDIO_ADDRESS, STUDIO_MAPS_LINK
+from config import ADMIN_ID, ADMIN_IDS, STUDIO_NAME, STUDIO_ADDRESS, STUDIO_MAPS_LINK, DEMO_MODE
 from keyboards.user_kb import main_menu_kb, back_to_menu_kb, portfolio_kb
 from database.db import get_services
 
@@ -22,9 +22,11 @@ async def is_subscribed(bot: Bot, user_id: int) -> bool:
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     admin = message.from_user.id in ADMIN_IDS
+    demo_banner = "\n🎭 <b>Это демо-версия бота.</b> Запись не создаётся.\n" if DEMO_MODE else ""
     await message.answer(
         f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
         f"Добро пожаловать в бот студии <b>{STUDIO_NAME}</b>.\n"
+        f"{demo_banner}"
         f"Выберите действие:",
         reply_markup=main_menu_kb(is_admin=admin)
     )
