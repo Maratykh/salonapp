@@ -104,8 +104,9 @@ async def seed_services():
 async def seed_settings():
     """Установить настройки по умолчанию."""
     defaults = {
-        "repeat_reminders_enabled": "1",   # повторные напоминания вкл
-        "master_30min_enabled":     "1",   # уведомление мастеру за 30 мин вкл
+        "repeat_reminders_enabled": "1",
+        "master_30min_enabled":     "1",
+        "dense_schedule":           "0",   # плотное расписание выкл
     }
     async with aiosqlite.connect(DB_PATH) as db:
         for key, value in defaults.items():

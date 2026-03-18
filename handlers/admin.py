@@ -130,8 +130,9 @@ async def admin_settings(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     repeat_on = await get_setting("repeat_reminders_enabled") == "1"
     master_on = await get_setting("master_30min_enabled") == "1"
+    dense_on  = await get_setting("dense_schedule") == "1"
     await callback.message.edit_text(
-        "<b>Управление</b>", reply_markup=admin_settings_kb(repeat_on, master_on)
+        "<b>Управление</b>", reply_markup=admin_settings_kb(repeat_on, master_on, dense_on)
     )
     await callback.answer()
 
@@ -145,12 +146,23 @@ async def toggle_repeat(callback: CallbackQuery):
     await set_setting("repeat_reminders_enabled", "0" if current == "1" else "1")
     repeat_on = await get_setting("repeat_reminders_enabled") == "1"
     master_on = await get_setting("master_30min_enabled") == "1"
-    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on))
+    dense_on  = await get_setting("dense_schedule") == "1"
+    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on))
     await callback.answer("Напоминания о коррекции: " + ("включены ✅" if repeat_on else "выключены ❌"))
 
 
-@router.callback_query(F.data == "toggle_master_30min")
-async def toggle_master(callback: CallbackQuery):
+@router.callback_query(F.data == "toggle_dense_schedule")
+async def toggle_dense(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    current = await get_setting("dense_schedule")
+    await set_setting("dense_schedule", "0" if current == "1" else "1")
+    repeat_on = await get_setting("repeat_reminders_enabled") == "1"
+    master_on = await get_setting("master_30min_enabled") == "1"
+    dense_on  = await get_setting("dense_schedule") == "1"
+    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on))
+    await callback.answer("Плотное расписание: " + ("включено ✅" if dense_on else "выключено ❌"))
     if not is_admin(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
@@ -158,7 +170,8 @@ async def toggle_master(callback: CallbackQuery):
     await set_setting("master_30min_enabled", "0" if current == "1" else "1")
     repeat_on = await get_setting("repeat_reminders_enabled") == "1"
     master_on = await get_setting("master_30min_enabled") == "1"
-    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on))
+    dense_on  = await get_setting("dense_schedule") == "1"
+    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on))
     await callback.answer("Уведомление за 30 мин: " + ("включено ✅" if master_on else "выключено ❌"))
 
 
