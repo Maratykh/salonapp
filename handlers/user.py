@@ -212,9 +212,13 @@ async def select_service(callback: CallbackQuery, state: FSMContext):
             dense_slots = []
             for slot in available_slots:
                 h, m = map(int, slot.split(":"))
+                # Слот сразу ПОСЛЕ занятого (предыдущий слот занят)
                 prev_total = h * 60 + m - SLOT_DURATION
                 prev_slot = f"{prev_total // 60:02d}:{prev_total % 60:02d}"
-                if prev_slot in occupied:
+                # Слот сразу ДО занятого (следующий слот после услуги занят)
+                end_total = h * 60 + m + svc["slots"] * SLOT_DURATION
+                next_slot = f"{end_total // 60:02d}:{end_total % 60:02d}"
+                if prev_slot in occupied or next_slot in occupied:
                     dense_slots.append(slot)
             if dense_slots:
                 available_slots = dense_slots
