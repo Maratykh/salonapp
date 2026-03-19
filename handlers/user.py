@@ -12,7 +12,8 @@ from config import MSG_BOOKING_CREATED, STUDIO_NAME, DEMO_MODE, DEMO_CONTACT
 from database.db import (
     get_available_dates, get_free_slots, get_free_slots_for_service,
     get_slots_for_date, create_appointment, get_user_appointment,
-    get_appointments_for_date, get_services, get_service_by_key, get_setting
+    get_appointments_for_date, get_services, get_service_by_key, get_setting,
+    blacklist_check
 )
 from keyboards.user_kb import (
     main_menu_kb as _main_menu_kb, services_kb, time_slots_kb,
@@ -74,6 +75,9 @@ async def show_my_appointments(callback: CallbackQuery):
 
 @router.callback_query(F.data == "book")
 async def start_booking(callback: CallbackQuery, state: FSMContext):
+    if await blacklist_check(callback.from_user.id):
+        await callback.answer("К сожалению, запись для вас недоступна.", show_alert=True)
+        return
     existing = await get_user_appointment(callback.from_user.id)
     if existing:
         await callback.message.edit_text(

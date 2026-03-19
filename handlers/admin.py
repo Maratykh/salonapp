@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import Command
 from states.states import AdminStates
 
-from config import ADMIN_ID, ADMIN_IDS, SLOT_DURATION
+from config import ADMIN_ID, ADMIN_IDS, SLOT_DURATION, DEMO_MODE
 from database.db import (
     add_slot, remove_slot, close_day, open_day,
     get_slots_for_date, get_schedule_for_date, get_available_dates,
@@ -18,7 +18,8 @@ from database.db import (
     create_manual_appointment, get_free_slots, get_free_slots_for_service, add_working_day,
     get_services, get_service_by_key, add_service, update_service, toggle_service,
     get_setting, set_setting, mark_attendance, save_job_ids,
-    reschedule_appointment, get_appointment_by_id
+    reschedule_appointment, get_appointment_by_id,
+    blacklist_add, blacklist_remove, blacklist_get_all
 )
 from keyboards.admin_kb import (
     admin_menu_kb, admin_back_kb, admin_settings_kb, admin_stats_kb,
@@ -32,6 +33,41 @@ from handlers.user import format_date_ru
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+# Описания кнопок для демо-режима
+DEMO_DESCRIPTIONS = {
+    "admin_view_schedule":  "📅 <b>Расписание на дату</b>\n\nМастер выбирает день и видит все записи: имя клиента, время, услугу. Можно отменить или перенести любую запись.",
+    "admin_add_day":        "➕ <b>Добавить рабочий день</b>\n\nМастер выбирает дату, затем начало и конец рабочего дня. Бот автоматически создаёт слоты с нужным шагом (15 мин).",
+    "admin_add_by_weekday": "🗓 <b>По дням недели</b>\n\nДобавить рабочие дни сразу на месяц вперёд по расписанию. Например: каждый вт, чт, сб с 10:00 до 18:00.",
+    "admin_manual_book":    "📝 <b>Записать клиента вручную</b>\n\nМастер сам записывает клиента — выбирает дату, услугу, время и вводит имя. Удобно для записи по телефону.",
+    "admin_settings":       "⚙️ <b>Управление</b>\n\nНастройки бота: услуги, статистика, рассылка, управление слотами, плотное расписание, чёрный список.",
+    "admin_services":       "💄 <b>Услуги</b>\n\nСписок всех услуг. Можно добавить новую, изменить цену, длительность, эмодзи или отключить услугу.",
+    "admin_stats":          "📊 <b>Статистика</b>\n\nВыручка, количество записей, явка клиентов, популярные услуги — за месяц или за всё время.",
+    "admin_broadcast":      "📣 <b>Рассылка</b>\n\nОтправить сообщение всем клиентам которые хоть раз записывались. Поддерживается текст, фото, видео.",
+    "admin_manage_slots":   "⏰ <b>Управление слотами</b>\n\nУдалить отдельные временные окна из расписания, не закрывая весь день.",
+    "admin_close_day":      "🔒 <b>Закрыть день</b>\n\nЗакрыть день для новых записей. Клиенты у которых уже есть записи получат уведомление об отмене.",
+    "admin_open_day":       "🔓 <b>Открыть день</b>\n\nОткрыть ранее закрытый день — слоты снова станут доступны для записи.",
+    "toggle_repeat_reminders": "🔁 <b>Напоминания о коррекции</b>\n\nВключить/выключить автоматические напоминания клиентам записаться на коррекцию через N дней после визита.",
+    "toggle_master_30min":  "⏰ <b>Уведомление мастеру за 30 мин</b>\n\nВключить/выключить напоминание мастеру о предстоящем клиенте за 30 минут.",
+    "toggle_dense_schedule":"🧲 <b>Плотное расписание</b>\n\nКогда включено — клиенты видят только слоты вплотную к уже существующим записям. Помогает избежать 'дырок' в расписании.",
+    "admin_blacklist":      "🚫 <b>Чёрный список</b>\n\nСписок заблокированных клиентов. Они не смогут записаться через бота.",
+}
+
+
+async def demo_intercept(callback: CallbackQuery) -> bool:
+    """Перехватить callback в демо-режиме и показать описание. Вернуть True если перехвачено."""
+    if not DEMO_MODE or is_admin(callback.from_user.id):
+        return False
+    desc = DEMO_DESCRIPTIONS.get(callback.data)
+    if not desc:
+        return False
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="◀ Назад в меню", callback_data="admin_menu")]
+    ])
+    await callback.message.edit_text(desc, reply_markup=kb)
+    await callback.answer()
+    return True
 
 
 def is_admin(user_id: int) -> bool:
@@ -121,10 +157,22 @@ async def cmd_admin(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "admin_menu")
 async def admin_menu_cb(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id):
+    if not is_admin(callback.from_user.id) and not DEMO_MODE:
         await callback.answer("Нет доступа", show_alert=True)
         return
     await state.clear()
+
+    # В демо-режиме для не-админов — показываем демо-панель
+    if DEMO_MODE and not is_admin(callback.from_user.id):
+        await callback.message.edit_text(
+            "🎭 <b>Демо — Панель администратора</b>\n\n"
+            "Здесь мастер управляет всем расписанием.\n"
+            "Нажмите на любую кнопку чтобы узнать что она делает:",
+            reply_markup=admin_menu_kb()
+        )
+        await callback.answer()
+        return
+
     today = date.today().strftime("%Y-%m-%d")
     slots = await get_schedule_for_date(today)
     seen = set()
@@ -144,6 +192,18 @@ async def admin_ignore(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer()
         return
+    await callback.answer()
+
+
+@router.callback_query(lambda c: DEMO_MODE and not is_admin(c.from_user.id) and c.data in DEMO_DESCRIPTIONS)
+async def demo_button_description(callback: CallbackQuery):
+    """В демо-режиме показывает описание кнопки вместо действия."""
+    desc = DEMO_DESCRIPTIONS.get(callback.data, "")
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="◀ Назад в меню", callback_data="admin_menu")
+    ]])
+    await callback.message.edit_text(desc, reply_markup=kb)
     await callback.answer()
 
 
@@ -690,6 +750,88 @@ async def attend_no(callback: CallbackQuery, bot: Bot):
         parse_mode="HTML"
     )
     await callback.answer("❌ Неявка отмечена")
+
+
+    await callback.answer("❌ Неявка отмечена")
+
+
+# ================================================================
+# ЧЁРНЫЙ СПИСОК
+# ================================================================
+
+@router.callback_query(F.data == "admin_blacklist")
+async def admin_blacklist_view(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await state.clear()
+    blocked = await blacklist_get_all()
+    if not blocked:
+        text = "<b>🚫 Чёрный список</b>\n\nСписок пуст."
+    else:
+        text = f"<b>🚫 Чёрный список</b> — {len(blocked)} чел.\n\n"
+        for b in blocked:
+            name = b["client_name"] or b["username"] or f"ID {b['user_id']}"
+            reason = f" — {b['reason']}" if b["reason"] else ""
+            text += f"• {name}{reason} /unban_{b['user_id']}\n"
+
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="◀ Назад", callback_data="admin_settings")
+    ]])
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("adm_ban_"))
+async def admin_ban_from_schedule(callback: CallbackQuery, bot: Bot):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    appt_id = int(callback.data.removeprefix("adm_ban_"))
+    appt = await get_appointment_by_id(appt_id)
+    if not appt or appt["user_id"] == 0:
+        await callback.answer("Нельзя заблокировать — ручная запись без Telegram", show_alert=True)
+        return
+
+    await blacklist_add(
+        user_id=appt["user_id"],
+        client_name=appt["client_name"],
+        reason="заблокирован из расписания"
+    )
+
+    # Отменяем текущую запись
+    result = await cancel_appointment(appt_id)
+    if result:
+        cancel_all_jobs(appt_id, result)
+        try:
+            await bot.send_message(
+                appt["user_id"],
+                "К сожалению, ваша запись отменена и запись через бота для вас недоступна."
+            )
+        except Exception:
+            pass
+        await post_schedule_to_channel(bot, result["date"])
+
+    await callback.answer(f"✅ {appt['client_name']} заблокирован", show_alert=True)
+    await send_schedule(callback, appt["date"] if result else "")
+
+
+@router.message(Command("unban"))
+async def cmd_unban(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Использование: /unban_<user_id>")
+        return
+    try:
+        user_id = int(parts[0].split("_")[1])
+    except Exception:
+        await message.answer("Неверный формат. Используйте /unban_123456789")
+        return
+    await blacklist_remove(user_id)
+    await message.answer(f"✅ Пользователь {user_id} разблокирован.")
 
 
 # ================================================================

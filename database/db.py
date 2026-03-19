@@ -78,6 +78,17 @@ async def init_db():
             )
         """)
 
+        # Чёрный список
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS blacklist (
+                user_id    INTEGER PRIMARY KEY,
+                username   TEXT,
+                client_name TEXT,
+                reason     TEXT DEFAULT '',
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            )
+        """)
+
         # Миграции для старых БД
         for col, definition in [
             ("phone",         "TEXT NOT NULL DEFAULT '—'"),
@@ -789,4 +800,44 @@ async def get_all_user_ids() -> list:
         )
         rows = await cur.fetchall()
     return [r[0] for r in rows]
+
+
+# ------------------------------------------------------------------
+# Чёрный список
+# ------------------------------------------------------------------
+
+async def blacklist_add(user_id: int, username: str = "", client_name: str = "", reason: str = ""):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO blacklist (user_id, username, client_name, reason) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, username, client_name, reason)
+        )
+        await db.commit()
+
+
+async def blacklist_remove(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM blacklist WHERE user_id=?", (user_id,))
+        await db.commit()
+
+
+async def blacklist_check(user_id: int) -> bool:
+    """Вернуть True если пользователь заблокирован."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT 1 FROM blacklist WHERE user_id=?", (user_id,)
+        )
+        row = await cur.fetchone()
+    return row is not None
+
+
+async def blacklist_get_all() -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT user_id, username, client_name, reason FROM blacklist ORDER BY created_at DESC"
+        )
+        rows = await cur.fetchall()
+    return [{"user_id": r[0], "username": r[1], "client_name": r[2], "reason": r[3]}
+            for r in rows]
 

@@ -22,13 +22,15 @@ async def is_subscribed(bot: Bot, user_id: int) -> bool:
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
     admin = message.from_user.id in ADMIN_IDS
+    # В демо-режиме панель администратора видна всем
+    show_admin = admin or DEMO_MODE
     demo_banner = "\n🎭 <b>Это демо-версия бота.</b> Запись не создаётся.\n" if DEMO_MODE else ""
     await message.answer(
         f"👋 Привет, <b>{message.from_user.first_name}</b>!\n\n"
         f"Добро пожаловать в бот студии <b>{STUDIO_NAME}</b>.\n"
         f"{demo_banner}"
         f"Выберите действие:",
-        reply_markup=main_menu_kb(is_admin=admin)
+        reply_markup=main_menu_kb(is_admin=show_admin)
     )
 
 
@@ -36,9 +38,10 @@ async def cmd_start(message: Message, state: FSMContext):
 async def show_main_menu(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     admin = callback.from_user.id in ADMIN_IDS
+    show_admin = admin or DEMO_MODE
     await callback.message.edit_text(
         f"💅 <b>Главное меню</b>\n\nВыберите действие:",
-        reply_markup=main_menu_kb(is_admin=admin)
+        reply_markup=main_menu_kb(is_admin=show_admin)
     )
     await callback.answer()
 

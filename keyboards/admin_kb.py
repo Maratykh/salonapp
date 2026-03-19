@@ -43,6 +43,7 @@ def admin_settings_kb(repeat_on: bool, master_on: bool, dense_on: bool = False) 
         text=f"{dense_icon} Плотное расписание",
         callback_data="toggle_dense_schedule"
     ))
+    builder.row(InlineKeyboardButton(text="🚫 Чёрный список", callback_data="admin_blacklist"))
     builder.row(InlineKeyboardButton(text="◀ Назад", callback_data="admin_menu"))
     return builder.as_markup()
 
@@ -141,8 +142,9 @@ def admin_schedule_kb(date_str: str, slots: list, page: int = 0) -> InlineKeyboa
             callback_data="admin_ignore"
         ))
         builder.row(
-            InlineKeyboardButton(text="📅 Перенести", callback_data=f"adm_reschedule_{s['appt_id']}"),
-            InlineKeyboardButton(text="✕ Отменить",  callback_data=f"adm_cancel_{s['appt_id']}"),
+            InlineKeyboardButton(text="📅 Перенести",     callback_data=f"adm_reschedule_{s['appt_id']}"),
+            InlineKeyboardButton(text="✕ Отменить",       callback_data=f"adm_cancel_{s['appt_id']}"),
+            InlineKeyboardButton(text="🚫 Заблокировать", callback_data=f"adm_ban_{s['appt_id']}"),
         )
 
     if not unique:
