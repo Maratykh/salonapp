@@ -130,7 +130,10 @@ async def seed_settings():
     defaults = {
         "repeat_reminders_enabled": "1",
         "master_30min_enabled":     "1",
-        "dense_schedule":           "0",   # плотное расписание выкл
+        "dense_schedule":           "0",
+        "loyalty_enabled":          "0",   # программа лояльности выкл
+        "loyalty_visits":           "3",   # скидка после N визитов
+        "loyalty_discount":         "10",  # скидка %
     }
     async with aiosqlite.connect(DB_PATH) as db:
         for key, value in defaults.items():
@@ -800,6 +803,25 @@ async def get_all_user_ids() -> list:
         )
         rows = await cur.fetchall()
     return [r[0] for r in rows]
+
+
+async def get_client_stats(user_id: int) -> dict:
+    """Статистика клиента: всего визитов, подтверждённых, последний визит."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("""
+            SELECT
+                COUNT(*)                                     AS total,
+                SUM(CASE WHEN attended=1 THEN 1 ELSE 0 END) AS confirmed,
+                MAX(date)                                    AS last_date
+            FROM appointments
+            WHERE user_id=? AND (date || ' ' || time_slot) < ?
+        """, (user_id, _now_local()))
+        row = await cur.fetchone()
+    return {
+        "total":     row[0] or 0,
+        "confirmed": row[1] or 0,
+        "last_date": row[2] or "",
+    }
 
 
 # ------------------------------------------------------------------

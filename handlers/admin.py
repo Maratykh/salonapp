@@ -217,11 +217,12 @@ async def admin_settings(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Нет доступа", show_alert=True)
         return
     await state.clear()
-    repeat_on = await get_setting("repeat_reminders_enabled") == "1"
-    master_on = await get_setting("master_30min_enabled") == "1"
-    dense_on  = await get_setting("dense_schedule") == "1"
+    repeat_on   = await get_setting("repeat_reminders_enabled") == "1"
+    master_on   = await get_setting("master_30min_enabled") == "1"
+    dense_on    = await get_setting("dense_schedule") == "1"
+    loyalty_on  = await get_setting("loyalty_enabled") == "1"
     await callback.message.edit_text(
-        "<b>Управление</b>", reply_markup=admin_settings_kb(repeat_on, master_on, dense_on)
+        "<b>Управление</b>", reply_markup=admin_settings_kb(repeat_on, master_on, dense_on, loyalty_on)
     )
     await callback.answer()
 
@@ -236,7 +237,8 @@ async def toggle_repeat(callback: CallbackQuery):
     repeat_on = await get_setting("repeat_reminders_enabled") == "1"
     master_on = await get_setting("master_30min_enabled") == "1"
     dense_on  = await get_setting("dense_schedule") == "1"
-    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on))
+    loyalty_on  = await get_setting("loyalty_enabled") == "1"
+    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on, loyalty_on))
     await callback.answer("Напоминания о коррекции: " + ("включены ✅" if repeat_on else "выключены ❌"))
 
 
@@ -250,7 +252,8 @@ async def toggle_dense(callback: CallbackQuery):
     repeat_on = await get_setting("repeat_reminders_enabled") == "1"
     master_on = await get_setting("master_30min_enabled") == "1"
     dense_on  = await get_setting("dense_schedule") == "1"
-    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on))
+    loyalty_on  = await get_setting("loyalty_enabled") == "1"
+    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on, loyalty_on))
     await callback.answer("Плотное расписание: " + ("включено ✅" if dense_on else "выключено ❌"))
 
 
@@ -264,8 +267,118 @@ async def toggle_master(callback: CallbackQuery):
     repeat_on = await get_setting("repeat_reminders_enabled") == "1"
     master_on = await get_setting("master_30min_enabled") == "1"
     dense_on  = await get_setting("dense_schedule") == "1"
-    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on))
+    loyalty_on  = await get_setting("loyalty_enabled") == "1"
+    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on, loyalty_on))
     await callback.answer("Уведомление за 30 мин: " + ("включено ✅" if master_on else "выключено ❌"))
+
+
+# ================================================================
+# Программа лояльности
+# ================================================================
+
+@router.callback_query(F.data == "loyalty_settings")
+async def loyalty_settings_view(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    loyalty_on  = await get_setting("loyalty_enabled") == "1"
+    visits      = await get_setting("loyalty_visits") or "3"
+    discount    = await get_setting("loyalty_discount") or "10"
+    icon = "✅" if loyalty_on else "❌"
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{icon} Включить/выключить", callback_data="loyalty_toggle")],
+        [
+            InlineKeyboardButton(text=f"Визитов: {visits}",    callback_data="loyalty_edit_visits"),
+            InlineKeyboardButton(text=f"Скидка: {discount}%",  callback_data="loyalty_edit_discount"),
+        ],
+        [InlineKeyboardButton(text="◀ Назад", callback_data="admin_settings")],
+    ])
+    await callback.message.edit_text(
+        f"⭐ <b>Программа лояльности</b>\n\n"
+        f"Статус: {'включена ✅' if loyalty_on else 'выключена ❌'}\n"
+        f"Скидка {discount}% после <b>{visits}</b> подтверждённых визитов\n\n"
+        f"Мастер видит в уведомлении о новой записи:\n"
+        f"• 🆕 Новый клиент — ещё не приходил\n"
+        f"• ✅ Проверенный — пришёл хотя бы 1 раз\n"
+        f"• ⭐ Постоянный + скидка — {visits}+ подтверждённых визитов",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "loyalty_toggle")
+async def loyalty_toggle(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    current = await get_setting("loyalty_enabled")
+    await set_setting("loyalty_enabled", "0" if current == "1" else "1")
+    await loyalty_settings_view(callback)
+
+
+@router.callback_query(F.data == "loyalty_edit_visits")
+async def loyalty_edit_visits(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await state.set_state(AdminStates.loyalty_visits)
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="◀ Отмена", callback_data="loyalty_settings")
+    ]])
+    current = await get_setting("loyalty_visits") or "3"
+    await callback.message.edit_text(
+        f"⭐ Сейчас: <b>{current}</b> визитов\n\nВведите новое количество визитов для получения скидки (1-20):",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "loyalty_edit_discount")
+async def loyalty_edit_discount(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await state.set_state(AdminStates.loyalty_discount)
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="◀ Отмена", callback_data="loyalty_settings")
+    ]])
+    current = await get_setting("loyalty_discount") or "10"
+    await callback.message.edit_text(
+        f"⭐ Сейчас: <b>{current}%</b>\n\nВведите размер скидки в % (1-99):",
+        reply_markup=kb
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.loyalty_visits)
+async def loyalty_save_visits(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id): return
+    try:
+        n = int(message.text.strip())
+        if n < 1 or n > 20: raise ValueError
+    except ValueError:
+        await message.answer("Введите число от 1 до 20:")
+        return
+    await set_setting("loyalty_visits", str(n))
+    await state.clear()
+    await message.answer(f"✅ Порог лояльности установлен: <b>{n}</b> визитов", reply_markup=admin_back_kb())
+
+
+@router.message(AdminStates.loyalty_discount)
+async def loyalty_save_discount(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id): return
+    try:
+        n = int(message.text.strip())
+        if n < 1 or n > 99: raise ValueError
+    except ValueError:
+        await message.answer("Введите число от 1 до 99:")
+        return
+    await set_setting("loyalty_discount", str(n))
+    await state.clear()
+    await message.answer(f"✅ Скидка установлена: <b>{n}%</b>", reply_markup=admin_back_kb())
 
 
 # ================================================================

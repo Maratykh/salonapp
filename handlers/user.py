@@ -13,7 +13,7 @@ from database.db import (
     get_available_dates, get_free_slots, get_free_slots_for_service,
     get_slots_for_date, create_appointment, get_user_appointment,
     get_appointments_for_date, get_services, get_service_by_key, get_setting,
-    blacklist_check
+    blacklist_check, get_client_stats
 )
 from keyboards.user_kb import (
     main_menu_kb as _main_menu_kb, services_kb, time_slots_kb,
@@ -268,12 +268,27 @@ async def enter_name(message: Message, state: FSMContext):
 
 @router.message(BookingStates.entering_phone)
 async def enter_phone(message: Message, state: FSMContext):
+    import re
     phone = message.text.strip()
-    digits = "".join(c for c in phone if c.isdigit())
-    if len(digits) < 10 or len(digits) > 12:
-        await message.answer("Номер должен содержать 10–12 цифр:", reply_markup=cancel_action_kb())
+    # Убираем пробелы, дефисы, скобки
+    clean = re.sub(r"[\s\-\(\)]", "", phone)
+    # Нормализуем: +375, 375, 8, +7, 7 → оставляем как есть, проверяем цифры
+    digits = re.sub(r"^\+", "", clean)
+    # Паттерн: РБ (+375), РФ (+7/8), UA (+380), KZ (+7)
+    valid = re.match(
+        r"^(\+?375\d{9}|80\d{9}|8\d{10}|\+?7\d{10}|\+?380\d{9}|\d{10,11})$",
+        clean
+    )
+    if not valid:
+        await message.answer(
+            "Введите номер в формате:\n"
+            "+375291234567 — для РБ\n"
+            "+79991234567 — для РФ\n"
+            "80291234567 — короткий формат РБ",
+            reply_markup=cancel_action_kb()
+        )
         return
-    await state.update_data(phone=phone)
+    await state.update_data(phone=clean)
     await state.set_state(BookingStates.confirming)
     data = await state.get_data()
     await message.answer(
@@ -282,7 +297,7 @@ async def enter_phone(message: Message, state: FSMContext):
         f"🕐 <b>{data['selected_time']} – {data['end_time']}</b>\n"
         f"{data['service_emoji']} <b>{data['service_name']}</b> — {data['service_price']} руб.\n"
         f"👤 <b>{data['client_name']}</b>\n"
-        f"📞 <b>{phone}</b>\n\nВсё верно?",
+        f"📞 <b>{clean}</b>\n\nВсё верно?",
         reply_markup=confirm_booking_kb()
     )
 
@@ -350,15 +365,35 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot: Bot):
     )
 
     try:
+        stats = await get_client_stats(user.id)
+        loyalty_enabled = await get_setting("loyalty_enabled") == "1"
+        loyalty_visits   = int(await get_setting("loyalty_visits") or 3)
+        loyalty_discount = int(await get_setting("loyalty_discount") or 10)
+
+        # Статус клиента
+        confirmed = stats["confirmed"]
+        if confirmed == 0:
+            client_status = "🆕 Новый клиент"
+        elif confirmed < loyalty_visits:
+            client_status = f"✅ Проверенный ({confirmed} визит{'а' if 2 <= confirmed <= 4 else 'ов' if confirmed >= 5 else ''})"
+        else:
+            client_status = f"⭐ Постоянный — {confirmed} визитов"
+
+        # Лояльность
+        loyalty_line = ""
+        if loyalty_enabled and confirmed >= loyalty_visits:
+            loyalty_line = f"\n🎁 <b>Скидка {loyalty_discount}%</b> (постоянный клиент)"
+
         username_line = f"@{user.username}" if user.username else f'<a href="tg://user?id={user.id}">профиль</a>'
         text = (
             f"🔔 <b>Новая запись!</b>\n\n"
             f"📅 {format_date_ru(data['selected_date'])}\n"
             f"🕐 {data['selected_time']} – {data['end_time']}\n"
             f"{data['service_emoji']} {data['service_name']} — {data['service_price']} руб.\n"
-            f"👤 {data['client_name']}\n"
+            f"👤 {data['client_name']} | {client_status}\n"
             f"📞 {data['phone']}\n"
-            f"✈️ {username_line}\n"
+            f"✈️ {username_line}"
+            f"{loyalty_line}\n"
             f"ID: <code>{appt_id}</code>"
         )
         for admin_id in ADMIN_IDS:

@@ -36,3 +36,6 @@ class AdminStates(StatesGroup):
     # Рассылка
     broadcast_text    = State()
     broadcast_confirm = State()
+    # Лояльность
+    loyalty_visits    = State()
+    loyalty_discount  = State()

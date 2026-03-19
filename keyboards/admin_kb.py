@@ -16,7 +16,7 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def admin_settings_kb(repeat_on: bool, master_on: bool, dense_on: bool = False) -> InlineKeyboardMarkup:
+def admin_settings_kb(repeat_on: bool, master_on: bool, dense_on: bool = False, loyalty_on: bool = False) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(text="💄 Услуги",     callback_data="admin_services"),
@@ -28,9 +28,10 @@ def admin_settings_kb(repeat_on: bool, master_on: bool, dense_on: bool = False) 
         InlineKeyboardButton(text="🔒 Закрыть день", callback_data="admin_close_day"),
         InlineKeyboardButton(text="🔓 Открыть день", callback_data="admin_open_day"),
     )
-    repeat_icon = "✅" if repeat_on else "❌"
-    master_icon = "✅" if master_on else "❌"
-    dense_icon  = "✅" if dense_on  else "❌"
+    repeat_icon   = "✅" if repeat_on   else "❌"
+    master_icon   = "✅" if master_on   else "❌"
+    dense_icon    = "✅" if dense_on    else "❌"
+    loyalty_icon  = "✅" if loyalty_on  else "❌"
     builder.row(InlineKeyboardButton(
         text=f"{repeat_icon} Напоминания о коррекции",
         callback_data="toggle_repeat_reminders"
@@ -42,6 +43,10 @@ def admin_settings_kb(repeat_on: bool, master_on: bool, dense_on: bool = False) 
     builder.row(InlineKeyboardButton(
         text=f"{dense_icon} Плотное расписание",
         callback_data="toggle_dense_schedule"
+    ))
+    builder.row(InlineKeyboardButton(
+        text=f"{loyalty_icon} Программа лояльности",
+        callback_data="loyalty_settings"
     ))
     builder.row(InlineKeyboardButton(text="🚫 Чёрный список", callback_data="admin_blacklist"))
     builder.row(InlineKeyboardButton(text="◀ Назад", callback_data="admin_menu"))
