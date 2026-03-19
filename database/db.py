@@ -1,8 +1,21 @@
 # database/db.py
 
 import aiosqlite
-from config import DB_PATH, SLOT_DURATION, DEFAULT_SERVICES
+from config import DB_PATH, SLOT_DURATION, DEFAULT_SERVICES, TIMEZONE
 from datetime import datetime
+import pytz
+
+
+def _now_local() -> str:
+    """Текущее время в таймзоне мастера в формате для SQLite."""
+    tz = pytz.timezone(TIMEZONE)
+    return datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _today_local() -> str:
+    """Сегодняшняя дата в таймзоне мастера."""
+    tz = pytz.timezone(TIMEZONE)
+    return datetime.now(tz).strftime("%Y-%m-%d")
 
 
 async def init_db():
@@ -279,14 +292,16 @@ async def open_day(date: str):
 
 
 async def get_available_dates() -> list:
+    now = _now_local()
+    today = _today_local()
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("""
             SELECT DISTINCT date FROM schedule
             WHERE is_booked=0 AND is_closed=0
-              AND datetime(date || ' ' || time_slot) > datetime('now','localtime')
-              AND date <  date('now','localtime','+31 days')
+              AND (date || ' ' || time_slot) > ?
+              AND date < date(?, '+31 days')
             ORDER BY date
-        """)
+        """, (now, today))
         rows = await cur.fetchall()
     return [r[0] for r in rows]
 
@@ -384,9 +399,9 @@ async def get_user_appointment(user_id: int) -> dict | None:
             "SELECT id, date, time_slot, client_name, phone, reminder_job_id, "
             "service_name, service_price, slots_count, service_key "
             "FROM appointments WHERE user_id=? "
-            "AND datetime(date || ' ' || time_slot) >= datetime('now','localtime') "
+            "AND (date || ' ' || time_slot) >= ? "
             "ORDER BY date, time_slot LIMIT 1",
-            (user_id,)
+            (user_id, _now_local())
         )
         row = await cur.fetchone()
     if row:
@@ -445,6 +460,7 @@ async def create_appointment(
 
 async def cancel_appointment(appointment_id: int) -> dict | None:
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("BEGIN EXCLUSIVE")
         cur = await db.execute(
             "SELECT user_id, date, time_slot, reminder_job_id, slots_count, "
             "repeat_job_id, master_job_id "
@@ -452,6 +468,7 @@ async def cancel_appointment(appointment_id: int) -> dict | None:
         )
         row = await cur.fetchone()
         if not row:
+            await db.execute("ROLLBACK")
             return None
         user_id, date, time_slot, reminder_job_id, slots_count, repeat_job_id, master_job_id = row
         slots_count = slots_count or 1
@@ -463,7 +480,7 @@ async def cancel_appointment(appointment_id: int) -> dict | None:
                 "UPDATE schedule SET is_booked=0 WHERE date=? AND time_slot=?", (date, slot)
             )
         await db.execute("DELETE FROM appointments WHERE id=?", (appointment_id,))
-        await db.commit()
+        await db.execute("COMMIT")
     return {"user_id": user_id, "date": date, "time_slot": time_slot,
             "reminder_job_id": reminder_job_id, "repeat_job_id": repeat_job_id,
             "master_job_id": master_job_id}
@@ -610,8 +627,8 @@ async def get_all_future_appointments() -> list:
             SELECT id, user_id, client_name, date, time_slot, reminder_job_id,
                    slots_count, service_name, service_key
             FROM appointments
-            WHERE date >= date('now','localtime') ORDER BY date, time_slot
-        """)
+            WHERE date >= ? ORDER BY date, time_slot
+        """, (_today_local(),))
         rows = await cur.fetchall()
     return [{"id": r[0], "user_id": r[1], "client_name": r[2], "date": r[3],
              "time_slot": r[4], "reminder_job_id": r[5], "slots_count": r[6],
@@ -678,43 +695,45 @@ async def create_manual_appointment(
 
 async def get_stats_month(year: int, month: int) -> dict:
     month_str = f"{year:04d}-{month:02d}"
+    pattern = f"{month_str}-%"
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute(
-            "SELECT COUNT(*) FROM appointments WHERE date LIKE ?", (f"{month_str}-%",))
-        total = (await cur.fetchone())[0]
-        cur = await db.execute(
-            "SELECT COUNT(DISTINCT user_id) FROM appointments "
-            "WHERE date LIKE ? AND user_id != 0", (f"{month_str}-%",))
-        unique_clients = (await cur.fetchone())[0]
+        # Один запрос — основные агрегаты
+        cur = await db.execute("""
+            SELECT
+                COUNT(*)                                        AS total,
+                COUNT(DISTINCT CASE WHEN user_id!=0 THEN user_id END) AS unique_clients,
+                SUM(service_price)                              AS revenue,
+                SUM(CASE WHEN attended=1 THEN 1 ELSE 0 END)    AS attended,
+                SUM(CASE WHEN attended=0 THEN 1 ELSE 0 END)    AS no_show
+            FROM appointments WHERE date LIKE ?
+        """, (pattern,))
+        row = await cur.fetchone()
+        total, unique_clients, revenue, attended, no_show = (
+            row[0], row[1], row[2] or 0, row[3], row[4]
+        )
+        # Новые клиенты в этом месяце
         cur = await db.execute("""
             SELECT COUNT(*) FROM (
-                SELECT user_id, MIN(date) as first_date FROM appointments
-                WHERE user_id != 0 GROUP BY user_id HAVING first_date LIKE ?)
-        """, (f"{month_str}-%",))
+                SELECT user_id, MIN(date) AS first_date FROM appointments
+                WHERE user_id!=0 GROUP BY user_id HAVING first_date LIKE ?)
+        """, (pattern,))
         new_clients = (await cur.fetchone())[0]
+        # Загруженность по дням + самый загруженный день
         cur = await db.execute(
             "SELECT date, COUNT(*) FROM appointments WHERE date LIKE ? "
-            "GROUP BY date ORDER BY date", (f"{month_str}-%",))
+            "GROUP BY date ORDER BY date", (pattern,))
         by_day = await cur.fetchall()
         busiest_day = max(by_day, key=lambda x: x[1]) if by_day else None
-        cur = await db.execute(
-            "SELECT COUNT(DISTINCT user_id) FROM appointments WHERE user_id != 0")
-        total_clients = (await cur.fetchone())[0]
-        cur = await db.execute(
-            "SELECT SUM(service_price) FROM appointments WHERE date LIKE ?", (f"{month_str}-%",))
-        revenue = (await cur.fetchone())[0] or 0
+        # По услугам
         cur = await db.execute(
             "SELECT service_name, COUNT(*) FROM appointments "
-            "WHERE date LIKE ? AND service_name != '' GROUP BY service_name ORDER BY COUNT(*) DESC",
-            (f"{month_str}-%",))
+            "WHERE date LIKE ? AND service_name!='' GROUP BY service_name ORDER BY 2 DESC",
+            (pattern,))
         by_service = await cur.fetchall()
-        # Явка
+        # Всего клиентов за всё время
         cur = await db.execute(
-            "SELECT COUNT(*) FROM appointments WHERE date LIKE ? AND attended=1", (f"{month_str}-%",))
-        attended = (await cur.fetchone())[0]
-        cur = await db.execute(
-            "SELECT COUNT(*) FROM appointments WHERE date LIKE ? AND attended=0", (f"{month_str}-%",))
-        no_show = (await cur.fetchone())[0]
+            "SELECT COUNT(DISTINCT user_id) FROM appointments WHERE user_id!=0")
+        total_clients = (await cur.fetchone())[0]
     return {
         "total": total, "unique_clients": unique_clients, "new_clients": new_clients,
         "busiest_day": busiest_day, "total_clients_ever": total_clients,
@@ -725,29 +744,35 @@ async def get_stats_month(year: int, month: int) -> dict:
 
 async def get_stats_alltime() -> dict:
     async with aiosqlite.connect(DB_PATH) as db:
-        cur = await db.execute("SELECT COUNT(*) FROM appointments")
-        total = (await cur.fetchone())[0]
-        cur = await db.execute(
-            "SELECT COUNT(DISTINCT user_id) FROM appointments WHERE user_id != 0")
-        unique_clients = (await cur.fetchone())[0]
+        # Один запрос — основные агрегаты
+        cur = await db.execute("""
+            SELECT
+                COUNT(*)                                        AS total,
+                COUNT(DISTINCT CASE WHEN user_id!=0 THEN user_id END) AS unique_clients,
+                SUM(service_price)                              AS revenue,
+                SUM(CASE WHEN attended=1 THEN 1 ELSE 0 END)    AS attended,
+                SUM(CASE WHEN attended=0 THEN 1 ELSE 0 END)    AS no_show
+            FROM appointments
+        """)
+        row = await cur.fetchone()
+        total, unique_clients, revenue, attended, no_show = (
+            row[0], row[1], row[2] or 0, row[3], row[4]
+        )
+        # Самый загруженный день
         cur = await db.execute(
             "SELECT date, COUNT(*) FROM appointments "
             "GROUP BY date ORDER BY COUNT(*) DESC LIMIT 1")
         busiest = await cur.fetchone()
+        # По месяцам
         cur = await db.execute(
-            "SELECT strftime('%Y-%m', date) as m, COUNT(*) FROM appointments "
+            "SELECT strftime('%Y-%m', date) AS m, COUNT(*) FROM appointments "
             "GROUP BY m ORDER BY m DESC LIMIT 6")
         by_month = await cur.fetchall()
-        cur = await db.execute("SELECT SUM(service_price) FROM appointments")
-        revenue = (await cur.fetchone())[0] or 0
+        # По услугам
         cur = await db.execute(
-            "SELECT service_name, COUNT(*) FROM appointments WHERE service_name != '' "
-            "GROUP BY service_name ORDER BY COUNT(*) DESC")
+            "SELECT service_name, COUNT(*) FROM appointments WHERE service_name!='' "
+            "GROUP BY service_name ORDER BY 2 DESC")
         by_service = await cur.fetchall()
-        cur = await db.execute("SELECT COUNT(*) FROM appointments WHERE attended=1")
-        attended = (await cur.fetchone())[0]
-        cur = await db.execute("SELECT COUNT(*) FROM appointments WHERE attended=0")
-        no_show = (await cur.fetchone())[0]
     return {
         "total": total, "unique_clients": unique_clients,
         "busiest_day": busiest, "by_month": by_month,

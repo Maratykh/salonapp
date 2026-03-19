@@ -7,7 +7,7 @@ from aiogram import Router, Bot, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
-from config import ADMIN_ID, ADMIN_IDS, SCHEDULE_CHANNEL_ID, SLOT_DURATION
+from config import ADMIN_ID, ADMIN_IDS, SLOT_DURATION
 from config import MSG_BOOKING_CREATED, STUDIO_NAME, DEMO_MODE, DEMO_CONTACT
 from database.db import (
     get_available_dates, get_free_slots, get_free_slots_for_service,
@@ -37,43 +37,6 @@ def format_date_ru(date_str: str) -> str:
     d = datetime.strptime(date_str, "%Y-%m-%d")
     return f"{d.day} {months[d.month]} {d.year} ({weekdays[d.weekday()]})"
 
-
-async def post_schedule_to_channel(bot: Bot, date_str: str):
-    if not SCHEDULE_CHANNEL_ID or "@your" in SCHEDULE_CHANNEL_ID:
-        return
-    appointments = await get_appointments_for_date(date_str)
-    free_slots = await get_free_slots(date_str)
-    date_formatted = format_date_ru(date_str)
-    text = f"<b>Расписание на {date_formatted}</b>\n\n"
-    if appointments:
-        text += "<b>Записаны:</b>\n"
-        for appt in appointments:
-            svc = f" ({appt['service_name']})" if appt.get("service_name") else ""
-            text += f"  {appt['time']} — {appt['client_name']}{svc}\n"
-        text += "\n"
-    if free_slots:
-        text += f"<b>Свободно с:</b> {free_slots[0]}\n"
-    else:
-        text += "<i>Все слоты заняты</i>"
-
-    from database.db import get_setting, set_setting
-    setting_key = f"schedule_msg_{date_str}"
-    existing_msg_id = await get_setting(setting_key)
-
-    try:
-        if existing_msg_id and existing_msg_id != "0":
-            try:
-                await bot.edit_message_text(
-                    text, chat_id=SCHEDULE_CHANNEL_ID,
-                    message_id=int(existing_msg_id), parse_mode="HTML"
-                )
-                return
-            except Exception:
-                pass  # Сообщение удалено — отправим новое
-        msg = await bot.send_message(SCHEDULE_CHANNEL_ID, text, parse_mode="HTML")
-        await set_setting(setting_key, str(msg.message_id))
-    except Exception as e:
-        logger.warning(f"Канал расписания: {e}")
 
 
 # ================================================================
@@ -290,9 +253,12 @@ async def enter_name(message: Message, state: FSMContext):
         return
     await state.update_data(client_name=name)
     await state.set_state(BookingStates.entering_phone)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="❌ Отмена", callback_data="main_menu")
+    ]])
     await message.answer(
         f"Имя: <b>{name}</b>\n\nВведите <b>номер телефона</b>:",
-        reply_markup=cancel_action_kb()
+        reply_markup=kb
     )
 
 
@@ -399,7 +365,6 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot: Bot):
     except Exception as e:
         logger.warning(f"Уведомление мастеру: {e}")
 
-    await post_schedule_to_channel(bot, data["selected_date"])
     await schedule_all_jobs(
         bot=bot, appointment_id=appt_id, user_id=user.id,
         date_str=data["selected_date"], time_slot=data["selected_time"],
@@ -470,5 +435,4 @@ async def user_cancel_appointment(callback: CallbackQuery, bot: Bot):
                 pass
     except Exception as e:
         logger.warning(f"Уведомление: {e}")
-    await post_schedule_to_channel(bot, result["date"])
     await callback.answer()

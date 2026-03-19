@@ -10,9 +10,10 @@ BOT_TOKEN  = os.getenv("BOT_TOKEN", "")
 _admin_ids = os.getenv("ADMIN_IDS", os.getenv("ADMIN_ID", "0"))
 ADMIN_IDS  = [int(x.strip()) for x in _admin_ids.split(",") if x.strip()]
 ADMIN_ID   = ADMIN_IDS[0] if ADMIN_IDS else 0  # первый — главный (для обратной совместимости)
-CHANNEL_ID   = "@manicur1234"
-CHANNEL_LINK = "https://t.me/manicur1234"
-SCHEDULE_CHANNEL_ID = "@manicur1234"
+
+# ---- Бэкап ----
+BACKUP_CHANNEL_ID = os.getenv("BACKUP_CHANNEL_ID", "")  # канал куда слать бэкапы БД
+BACKUP_HOUR       = 3   # час отправки бэкапа (по таймзоне мастера)
 
 # ---- База данных ----
 DB_PATH = "manicure_bot.db"

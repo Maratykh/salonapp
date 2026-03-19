@@ -13,7 +13,7 @@ from database.db import (
     get_setting, get_service_by_key
 )
 from config import ADMIN_ID, ADMIN_IDS, SLOT_DURATION, MSG_REMINDER_24H, MSG_REPEAT_REMINDER, MSG_MASTER_30MIN
-from config import STUDIO_NAME, STUDIO_ADDRESS, TIMEZONE
+from config import STUDIO_NAME, STUDIO_ADDRESS, TIMEZONE, BACKUP_CHANNEL_ID, BACKUP_HOUR, DB_PATH
 
 logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
@@ -38,6 +38,15 @@ async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         timezone=tz,
     )
     _scheduler.start()
+
+    # Ежедневный бэкап базы данных
+    if BACKUP_CHANNEL_ID:
+        _scheduler.add_job(
+            send_backup, trigger="cron", hour=BACKUP_HOUR, minute=0,
+            args=[bot], id="daily_backup", replace_existing=True
+        )
+        logger.info(f"Бэкап БД запланирован на {BACKUP_HOUR}:00 каждый день")
+
     return _scheduler
 
 
@@ -243,3 +252,27 @@ async def ask_attendance(bot: Bot, appointment_id: int, client_name: str,
                 pass
     except Exception as e:
         logger.error(f"Ошибка запроса явки: {e}")
+
+
+async def send_backup(bot: Bot):
+    """Отправить бэкап базы данных в канал."""
+    if not BACKUP_CHANNEL_ID:
+        return
+    import os
+    try:
+        if not os.path.exists(DB_PATH):
+            logger.warning("Файл БД не найден для бэкапа")
+            return
+        now = now_local()
+        date_str = now.strftime("%Y-%m-%d_%H-%M")
+        from aiogram.types import FSInputFile
+        db_file = FSInputFile(DB_PATH, filename=f"backup_{date_str}.db")
+        await bot.send_document(
+            BACKUP_CHANNEL_ID,
+            db_file,
+            caption=f"🗄 <b>Бэкап базы данных</b>\n📅 {now.strftime('%d.%m.%Y %H:%M')}",
+            parse_mode="HTML"
+        )
+        logger.info(f"Бэкап отправлен в {BACKUP_CHANNEL_ID}")
+    except Exception as e:
+        logger.error(f"Ошибка отправки бэкапа: {e}")

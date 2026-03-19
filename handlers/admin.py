@@ -28,7 +28,7 @@ from keyboards.admin_kb import (
 )
 from utils.admin_calendar import build_admin_calendar
 from utils.scheduler import cancel_all_jobs, schedule_all_jobs
-from handlers.user import format_date_ru, post_schedule_to_channel
+from handlers.user import format_date_ru
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -75,6 +75,31 @@ async def send_schedule(callback: CallbackQuery, date_str: str, page: int = 0):
 # /admin
 # ================================================================
 
+@router.message(Command("backup"))
+async def cmd_backup(message: Message):
+    if not is_admin(message.from_user.id):
+        return
+    from utils.scheduler import send_backup
+    from config import BACKUP_CHANNEL_ID, DB_PATH
+    import os
+    try:
+        if not os.path.exists(DB_PATH):
+            await message.answer("❌ Файл базы данных не найден.")
+            return
+        from aiogram.types import FSInputFile
+        from utils.scheduler import now_local
+        now = now_local()
+        date_str = now.strftime("%Y-%m-%d_%H-%M")
+        db_file = FSInputFile(DB_PATH, filename=f"backup_{date_str}.db")
+        await message.answer_document(
+            db_file,
+            caption=f"🗄 <b>Бэкап базы данных</b>\n📅 {now.strftime('%d.%m.%Y %H:%M')}",
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+
 @router.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -116,6 +141,9 @@ async def admin_menu_cb(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "admin_ignore")
 async def admin_ignore(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
     await callback.answer()
 
 
@@ -284,16 +312,21 @@ async def admin_wd_end_picked(callback: CallbackQuery, state: FSMContext, bot: B
         return
     today = date.today()
     added_days = 0
+    already_days = 0
     for i in range(1, 32):
         d = today + timedelta(days=i)
         if d.weekday() in selected:
             n = await add_working_day(d.strftime("%Y-%m-%d"), start_time, end_time)
             if n > 0:
                 added_days += 1
+            else:
+                already_days += 1
     weekday_names = ["пн","вт","ср","чт","пт","сб","вс"]
     names = ", ".join(weekday_names[w] for w in sorted(selected))
+    already_str = f"\nУже существовало: <b>{already_days}</b>" if already_days else ""
     await callback.message.edit_text(
-        f"<b>Готово!</b>\n\nДни: <b>{names}</b>\nВремя: {start_time}–{end_time}\nДней добавлено: <b>{added_days}</b>",
+        f"<b>Готово!</b>\n\nДни: <b>{names}</b>\nВремя: {start_time}–{end_time}\n"
+        f"Добавлено: <b>{added_days}</b>{already_str}",
         reply_markup=admin_menu_kb()
     )
     await callback.answer()
@@ -325,7 +358,6 @@ async def admin_delete_slot_cb(callback: CallbackQuery, state: FSMContext, bot: 
     success = await remove_slot(date_str, time_str)
     if success:
         await callback.answer(f"Слот {time_str} удалён")
-        await post_schedule_to_channel(bot, date_str)
     else:
         await callback.answer("Не удалось удалить", show_alert=True)
     slots = await get_slots_for_date(date_str)
@@ -474,7 +506,6 @@ async def admin_manual_confirm(callback: CallbackQuery, state: FSMContext, bot: 
         f"{data['manual_name']}",
         reply_markup=admin_menu_kb()
     )
-    await post_schedule_to_channel(bot, data["manual_date"])
     await schedule_all_jobs(
         bot=bot, appointment_id=appt_id, user_id=0,
         date_str=data["manual_date"], time_slot=data["manual_time"],
@@ -523,7 +554,6 @@ async def admin_cancel_from_schedule(callback: CallbackQuery, bot: Bot):
             )
         except Exception as e:
             logger.warning(f"Уведомление: {e}")
-    await post_schedule_to_channel(bot, date_str)
     await send_schedule(callback, date_str)
 
 
@@ -627,8 +657,6 @@ async def admin_reschedule_time_picked(callback: CallbackQuery, state: FSMContex
         f"Стало: <b>{format_date_ru(new_date)}, {new_time}</b>",
         reply_markup=admin_menu_kb()
     )
-    await post_schedule_to_channel(bot, result["old_date"])
-    await post_schedule_to_channel(bot, new_date)
     await callback.answer()
 
 
@@ -1007,7 +1035,6 @@ async def admin_cal_day(callback: CallbackQuery, state: FSMContext, bot: Bot):
         await callback.message.edit_text(
             f"<b>День закрыт</b>\n\n{format_date_ru(date_str)}", reply_markup=admin_menu_kb()
         )
-        await post_schedule_to_channel(bot, date_str)
 
         # Уведомляем клиентов у которых есть записи
         for appt in booked_appts:
@@ -1028,7 +1055,6 @@ async def admin_cal_day(callback: CallbackQuery, state: FSMContext, bot: Bot):
         await callback.message.edit_text(
             f"<b>День открыт</b>\n\n{format_date_ru(date_str)}", reply_markup=admin_menu_kb()
         )
-        await post_schedule_to_channel(bot, date_str)
 
     elif action == "manual":
         free = await get_free_slots(date_str)
@@ -1088,7 +1114,6 @@ async def admin_day_end_picked(callback: CallbackQuery, state: FSMContext, bot: 
         f"Хотите добавить ещё одно окно на этот день?",
         reply_markup=add_another_window_kb(date_str)
     )
-    await post_schedule_to_channel(bot, date_str)
     await callback.answer()
 
 
@@ -1291,9 +1316,21 @@ async def admin_broadcast_send(callback: CallbackQuery, state: FSMContext, bot: 
                 message_id=message_id
             )
             sent += 1
-        except Exception:
-            failed += 1
-        await asyncio.sleep(0.05)  # 20 сообщений/сек — лимит Telegram
+        except Exception as e:
+            err = str(e)
+            if "RetryAfter" in err or "Too Many Requests" in err:
+                # Извлекаем время ожидания и делаем паузу
+                import re
+                wait = int(re.search(r'\d+', err).group() or 5)
+                await asyncio.sleep(wait)
+                try:
+                    await bot.copy_message(chat_id=user_id, from_chat_id=chat_id, message_id=message_id)
+                    sent += 1
+                except Exception:
+                    failed += 1
+            else:
+                failed += 1
+        await asyncio.sleep(0.05)
 
     await callback.message.edit_text(
         f"📣 <b>Рассылка завершена</b>\n\n"
@@ -1307,6 +1344,9 @@ async def admin_broadcast_send(callback: CallbackQuery, state: FSMContext, bot: 
 
 @router.callback_query(F.data == "broadcast_cancel")
 async def admin_broadcast_cancel(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
     await state.clear()
     await callback.message.edit_text(
         "❌ Рассылка отменена.", reply_markup=admin_menu_kb()
