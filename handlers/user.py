@@ -7,7 +7,7 @@ from aiogram import Router, Bot, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 
-from config import ADMIN_ID, ADMIN_IDS, SLOT_DURATION
+from config import ADMIN_ID, ADMIN_IDS, SCHEDULE_CHANNEL_ID, SLOT_DURATION
 from config import MSG_BOOKING_CREATED, STUDIO_NAME, DEMO_MODE, DEMO_CONTACT
 from database.db import (
     get_available_dates, get_free_slots, get_free_slots_for_service,
@@ -37,6 +37,44 @@ def format_date_ru(date_str: str) -> str:
     weekdays = ["понедельник","вторник","среда","четверг","пятница","суббота","воскресенье"]
     d = datetime.strptime(date_str, "%Y-%m-%d")
     return f"{d.day} {months[d.month]} {d.year} ({weekdays[d.weekday()]})"
+
+
+async def post_schedule_to_channel(bot: Bot, date_str: str):
+    """Отправить/обновить расписание на дату в канал."""
+    if not SCHEDULE_CHANNEL_ID or not date_str:
+        return
+    from database.db import get_appointments_for_date, get_free_slots, get_setting, set_setting
+    appointments = await get_appointments_for_date(date_str)
+    free_slots   = await get_free_slots(date_str)
+    date_formatted = format_date_ru(date_str)
+    text = f"<b>Расписание на {date_formatted}</b>\n\n"
+    if appointments:
+        text += "<b>Записаны:</b>\n"
+        for appt in appointments:
+            svc = f" ({appt['service_name']})" if appt.get("service_name") else ""
+            text += f"  {appt['time']} — {appt['client_name']}{svc}\n"
+        text += "\n"
+    if free_slots:
+        text += f"<b>Свободно с:</b> {free_slots[0]}\n"
+    else:
+        text += "<i>Все слоты заняты</i>"
+
+    setting_key     = f"schedule_msg_{date_str}"
+    existing_msg_id = await get_setting(setting_key)
+    try:
+        if existing_msg_id and existing_msg_id != "0":
+            try:
+                await bot.edit_message_text(
+                    text, chat_id=SCHEDULE_CHANNEL_ID,
+                    message_id=int(existing_msg_id), parse_mode="HTML"
+                )
+                return
+            except Exception:
+                pass
+        msg = await bot.send_message(SCHEDULE_CHANNEL_ID, text, parse_mode="HTML")
+        await set_setting(setting_key, str(msg.message_id))
+    except Exception as e:
+        logger.warning(f"Канал расписания: {e}")
 
 
 

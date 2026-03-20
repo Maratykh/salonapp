@@ -12,8 +12,9 @@ ADMIN_IDS  = [int(x.strip()) for x in _admin_ids.split(",") if x.strip()]
 ADMIN_ID   = ADMIN_IDS[0] if ADMIN_IDS else 0  # первый — главный (для обратной совместимости)
 
 # ---- Бэкап ----
-BACKUP_CHANNEL_ID = os.getenv("BACKUP_CHANNEL_ID", "")  # канал куда слать бэкапы БД
-BACKUP_HOUR       = 3   # час отправки бэкапа (по таймзоне мастера)
+BACKUP_CHANNEL_ID  = os.getenv("BACKUP_CHANNEL_ID", "")   # канал для бэкапов БД
+BACKUP_HOUR        = 3
+SCHEDULE_CHANNEL_ID = os.getenv("SCHEDULE_CHANNEL_ID", "") # канал для расписания (опционально)
 
 # ---- База данных ----
 DB_PATH = "manicure_bot.db"
