@@ -132,8 +132,9 @@ async def seed_settings():
         "master_30min_enabled":     "1",
         "dense_schedule":           "0",
         "loyalty_enabled":          "0",   # программа лояльности выкл
-        "loyalty_visits":           "3",   # скидка после N визитов
-        "loyalty_discount":         "10",  # скидка %
+        "loyalty_mode":             "discount",  # "discount" или "free_visit"
+        "loyalty_visits":           "3",   # скидка/бесплатный визит после N визитов
+        "loyalty_discount":         "10",  # скидка % (только для режима discount)
     }
     async with aiosqlite.connect(DB_PATH) as db:
         for key, value in defaults.items():

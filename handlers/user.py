@@ -366,12 +366,14 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
     try:
         stats = await get_client_stats(user.id)
-        loyalty_enabled = await get_setting("loyalty_enabled") == "1"
+        loyalty_enabled  = await get_setting("loyalty_enabled") == "1"
+        loyalty_mode     = await get_setting("loyalty_mode") or "discount"
         loyalty_visits   = int(await get_setting("loyalty_visits") or 3)
         loyalty_discount = int(await get_setting("loyalty_discount") or 10)
 
-        # Статус клиента
         confirmed = stats["confirmed"]
+
+        # Статус клиента
         if confirmed == 0:
             client_status = "🆕 Новый клиент"
         elif confirmed < loyalty_visits:
@@ -381,8 +383,23 @@ async def confirm_booking(callback: CallbackQuery, state: FSMContext, bot: Bot):
 
         # Лояльность
         loyalty_line = ""
-        if loyalty_enabled and confirmed >= loyalty_visits:
-            loyalty_line = f"\n🎁 <b>Скидка {loyalty_discount}%</b> (постоянный клиент)"
+        if loyalty_enabled and confirmed > 0:
+            # Считаем позицию в текущем цикле
+            position_in_cycle = confirmed % loyalty_visits
+            visits_to_reward  = loyalty_visits - position_in_cycle
+
+            if position_in_cycle == 0:
+                # Достиг порога — этот визит или следующий бесплатный/со скидкой
+                if loyalty_mode == "free_visit":
+                    loyalty_line = f"\n🎁 <b>Этот визит бесплатный!</b> (каждые {loyalty_visits} походов)"
+                else:
+                    loyalty_line = f"\n🎁 <b>Скидка {loyalty_discount}%</b> (постоянный клиент)"
+            elif visits_to_reward <= 2:
+                # Скоро получит награду
+                if loyalty_mode == "free_visit":
+                    loyalty_line = f"\n⏳ До бесплатного визита: <b>{visits_to_reward}</b>"
+                else:
+                    loyalty_line = f"\n⏳ До скидки {loyalty_discount}%: <b>{visits_to_reward}</b>"
 
         username_line = f"@{user.username}" if user.username else f'<a href="tg://user?id={user.id}">профиль</a>'
         text = (

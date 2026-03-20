@@ -270,26 +270,47 @@ async def loyalty_settings_view(callback: CallbackQuery):
         await callback.answer("Нет доступа", show_alert=True)
         return
     loyalty_on  = await get_setting("loyalty_enabled") == "1"
+    mode        = await get_setting("loyalty_mode") or "discount"
     visits      = await get_setting("loyalty_visits") or "3"
     discount    = await get_setting("loyalty_discount") or "10"
-    icon = "✅" if loyalty_on else "❌"
+    icon        = "✅" if loyalty_on else "❌"
+    mode_icon   = "💰" if mode == "discount" else "🎁"
+
+    if mode == "discount":
+        mode_text = f"Режим: {mode_icon} <b>Скидка {discount}%</b> после {visits} визитов"
+    else:
+        mode_text = f"Режим: {mode_icon} <b>Бесплатный визит</b> каждые {visits} походов"
+
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"{icon} Включить/выключить", callback_data="loyalty_toggle")],
         [
-            InlineKeyboardButton(text=f"Визитов: {visits}",    callback_data="loyalty_edit_visits"),
-            InlineKeyboardButton(text=f"Скидка: {discount}%",  callback_data="loyalty_edit_discount"),
+            InlineKeyboardButton(
+                text=f"{'💰 Скидка' if mode == 'discount' else '💰 Переключить на скидку'}",
+                callback_data="loyalty_mode_discount"
+            ),
+            InlineKeyboardButton(
+                text=f"{'🎁 Бесплатный' if mode == 'free_visit' else '🎁 Переключить на бесплатный'}",
+                callback_data="loyalty_mode_free"
+            ),
         ],
+        [
+            InlineKeyboardButton(text=f"Каждые визитов: {visits}", callback_data="loyalty_edit_visits"),
+        ],
+        [
+            InlineKeyboardButton(text=f"Скидка: {discount}%", callback_data="loyalty_edit_discount"),
+        ] if mode == "discount" else [],
         [InlineKeyboardButton(text="◀ Назад", callback_data="admin_settings")],
     ])
     await callback.message.edit_text(
         f"⭐ <b>Программа лояльности</b>\n\n"
         f"Статус: {'включена ✅' if loyalty_on else 'выключена ❌'}\n"
-        f"Скидка {discount}% после <b>{visits}</b> подтверждённых визитов\n\n"
-        f"Мастер видит в уведомлении о новой записи:\n"
+        f"{mode_text}\n\n"
+        f"Клиент видит в уведомлении:\n"
         f"• 🆕 Новый клиент — ещё не приходил\n"
         f"• ✅ Проверенный — пришёл хотя бы 1 раз\n"
-        f"• ⭐ Постоянный + скидка — {visits}+ подтверждённых визитов",
+        f"• ⭐ Постоянный — достиг порога\n"
+        f"  {'→ получает скидку' if mode == 'discount' else '→ следующий визит бесплатный'}",
         reply_markup=kb
     )
     await callback.answer()
@@ -305,19 +326,42 @@ async def loyalty_toggle(callback: CallbackQuery):
     await loyalty_settings_view(callback)
 
 
+@router.callback_query(F.data == "loyalty_mode_discount")
+async def loyalty_mode_discount(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await set_setting("loyalty_mode", "discount")
+    await callback.answer("Режим: скидка % ✅")
+    await loyalty_settings_view(callback)
+
+
+@router.callback_query(F.data == "loyalty_mode_free")
+async def loyalty_mode_free(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await set_setting("loyalty_mode", "free_visit")
+    await callback.answer("Режим: бесплатный визит ✅")
+    await loyalty_settings_view(callback)
+
+
 @router.callback_query(F.data == "loyalty_edit_visits")
 async def loyalty_edit_visits(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
         await callback.answer("Нет доступа", show_alert=True)
         return
     await state.set_state(AdminStates.loyalty_visits)
+    mode    = await get_setting("loyalty_mode") or "discount"
+    current = await get_setting("loyalty_visits") or "3"
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="◀ Отмена", callback_data="loyalty_settings")
     ]])
-    current = await get_setting("loyalty_visits") or "3"
+    label = "скидки" if mode == "discount" else "бесплатного визита"
     await callback.message.edit_text(
-        f"⭐ Сейчас: <b>{current}</b> визитов\n\nВведите новое количество визитов для получения скидки (1-20):",
+        f"⭐ Сейчас: каждые <b>{current}</b> визитов\n\n"
+        f"Введите через сколько визитов давать {label} (1-50):",
         reply_markup=kb
     )
     await callback.answer()
@@ -329,11 +373,11 @@ async def loyalty_edit_discount(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Нет доступа", show_alert=True)
         return
     await state.set_state(AdminStates.loyalty_discount)
+    current = await get_setting("loyalty_discount") or "10"
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="◀ Отмена", callback_data="loyalty_settings")
     ]])
-    current = await get_setting("loyalty_discount") or "10"
     await callback.message.edit_text(
         f"⭐ Сейчас: <b>{current}%</b>\n\nВведите размер скидки в % (1-99):",
         reply_markup=kb
@@ -346,13 +390,18 @@ async def loyalty_save_visits(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id): return
     try:
         n = int(message.text.strip())
-        if n < 1 or n > 20: raise ValueError
+        if n < 1 or n > 50: raise ValueError
     except ValueError:
-        await message.answer("Введите число от 1 до 20:")
+        await message.answer("Введите число от 1 до 50:")
         return
     await set_setting("loyalty_visits", str(n))
     await state.clear()
-    await message.answer(f"✅ Порог лояльности установлен: <b>{n}</b> визитов", reply_markup=admin_back_kb())
+    mode = await get_setting("loyalty_mode") or "discount"
+    label = "скидка" if mode == "discount" else "бесплатный визит"
+    await message.answer(
+        f"✅ {label.capitalize()} — каждые <b>{n}</b> визитов",
+        reply_markup=admin_back_kb()
+    )
 
 
 @router.message(AdminStates.loyalty_discount)
