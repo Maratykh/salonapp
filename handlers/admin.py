@@ -22,8 +22,8 @@ from database.db import (
     blacklist_add, blacklist_remove, blacklist_get_all
 )
 from keyboards.admin_kb import (
-    admin_menu_kb, admin_back_kb, admin_settings_kb, admin_stats_kb,
-    admin_schedule_kb, admin_schedule_full_kb, time_picker_kb,
+    admin_menu_kb, admin_back_kb, admin_settings_kb, admin_content_kb, admin_tweaks_kb,
+    admin_stats_kb, admin_schedule_kb, admin_schedule_full_kb, time_picker_kb,
     manual_confirm_kb, manual_free_slots_kb, manual_services_kb,
     weekday_picker_kb, admin_services_kb, admin_service_detail_kb
 )
@@ -40,7 +40,9 @@ DEMO_DESCRIPTIONS = {
     "admin_add_day":        "➕ <b>Добавить рабочий день</b>\n\nМастер выбирает дату, затем начало и конец рабочего дня. Бот автоматически создаёт слоты с нужным шагом (15 мин).",
     "admin_add_by_weekday": "🗓 <b>По дням недели</b>\n\nДобавить рабочие дни сразу на месяц вперёд по расписанию. Например: каждый вт, чт, сб с 10:00 до 18:00.",
     "admin_manual_book":    "📝 <b>Записать клиента вручную</b>\n\nМастер сам записывает клиента — выбирает дату, услугу, время и вводит имя. Удобно для записи по телефону.",
-    "admin_settings":       "⚙️ <b>Управление</b>\n\nНастройки бота: услуги, статистика, рассылка, управление слотами, плотное расписание, чёрный список.",
+    "admin_settings":       "⚙️ <b>Управление</b>\n\nЗдесь два раздела:\n📋 Контент — услуги, статистика, рассылка, чёрный список.\n🔧 Настройки — тумблеры напоминаний, плотное расписание, лояльность.",
+    "admin_content":        "📋 <b>Контент</b>\n\nУслуги, статистика, рассылка клиентам и чёрный список.",
+    "admin_tweaks":         "🔧 <b>Настройки</b>\n\nТумблеры: напоминания о коррекции, уведомление за 30 мин, плотное расписание, программа лояльности.",
     "admin_services":       "💄 <b>Услуги</b>\n\nСписок всех услуг. Можно добавить новую, изменить цену, длительность, эмодзи или отключить услугу.",
     "admin_stats":          "📊 <b>Статистика</b>\n\nВыручка, количество записей, явка клиентов, популярные услуги — за месяц или за всё время.",
     "admin_broadcast":      "📣 <b>Рассылка</b>\n\nОтправить сообщение всем клиентам которые хоть раз записывались. Поддерживается текст, фото, видео.",
@@ -205,12 +207,37 @@ async def admin_settings(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Нет доступа", show_alert=True)
         return
     await state.clear()
-    repeat_on   = await get_setting("repeat_reminders_enabled") == "1"
-    master_on   = await get_setting("master_30min_enabled") == "1"
-    dense_on    = await get_setting("dense_schedule") == "1"
-    loyalty_on  = await get_setting("loyalty_enabled") == "1"
     await callback.message.edit_text(
-        "<b>Управление</b>", reply_markup=admin_settings_kb(repeat_on, master_on, dense_on, loyalty_on)
+        "<b>Управление</b>\n\nВыберите раздел:",
+        reply_markup=admin_settings_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_content")
+async def admin_content(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    await callback.message.edit_text(
+        "<b>📋 Контент</b>",
+        reply_markup=admin_content_kb()
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_tweaks")
+async def admin_tweaks(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Нет доступа", show_alert=True)
+        return
+    repeat_on  = await get_setting("repeat_reminders_enabled") == "1"
+    master_on  = await get_setting("master_30min_enabled") == "1"
+    dense_on   = await get_setting("dense_schedule") == "1"
+    loyalty_on = await get_setting("loyalty_enabled") == "1"
+    await callback.message.edit_text(
+        "<b>🔧 Настройки</b>",
+        reply_markup=admin_tweaks_kb(repeat_on, master_on, dense_on, loyalty_on)
     )
     await callback.answer()
 
@@ -226,7 +253,7 @@ async def toggle_repeat(callback: CallbackQuery):
     master_on = await get_setting("master_30min_enabled") == "1"
     dense_on  = await get_setting("dense_schedule") == "1"
     loyalty_on  = await get_setting("loyalty_enabled") == "1"
-    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on, loyalty_on))
+    await callback.message.edit_reply_markup(reply_markup=admin_tweaks_kb(repeat_on, master_on, dense_on, loyalty_on))
     await callback.answer("Напоминания о коррекции: " + ("включены ✅" if repeat_on else "выключены ❌"))
 
 
@@ -241,7 +268,7 @@ async def toggle_dense(callback: CallbackQuery):
     master_on = await get_setting("master_30min_enabled") == "1"
     dense_on  = await get_setting("dense_schedule") == "1"
     loyalty_on  = await get_setting("loyalty_enabled") == "1"
-    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on, loyalty_on))
+    await callback.message.edit_reply_markup(reply_markup=admin_tweaks_kb(repeat_on, master_on, dense_on, loyalty_on))
     await callback.answer("Плотное расписание: " + ("включено ✅" if dense_on else "выключено ❌"))
 
 
@@ -256,7 +283,7 @@ async def toggle_master(callback: CallbackQuery):
     master_on = await get_setting("master_30min_enabled") == "1"
     dense_on  = await get_setting("dense_schedule") == "1"
     loyalty_on  = await get_setting("loyalty_enabled") == "1"
-    await callback.message.edit_reply_markup(reply_markup=admin_settings_kb(repeat_on, master_on, dense_on, loyalty_on))
+    await callback.message.edit_reply_markup(reply_markup=admin_tweaks_kb(repeat_on, master_on, dense_on, loyalty_on))
     await callback.answer("Уведомление за 30 мин: " + ("включено ✅" if master_on else "выключено ❌"))
 
 
@@ -300,7 +327,7 @@ async def loyalty_settings_view(callback: CallbackQuery):
         [
             InlineKeyboardButton(text=f"Скидка: {discount}%", callback_data="loyalty_edit_discount"),
         ] if mode == "discount" else [],
-        [InlineKeyboardButton(text="◀ Назад", callback_data="admin_settings")],
+        [InlineKeyboardButton(text="◀ Назад", callback_data="admin_tweaks")],
     ])
     await callback.message.edit_text(
         f"⭐ <b>Программа лояльности</b>\n\n"
@@ -927,7 +954,7 @@ async def admin_blacklist_view(callback: CallbackQuery, state: FSMContext):
 
     from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="◀ Назад", callback_data="admin_settings")
+        InlineKeyboardButton(text="◀ Назад", callback_data="admin_content")
     ]])
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
