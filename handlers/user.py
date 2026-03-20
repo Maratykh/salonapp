@@ -276,7 +276,7 @@ async def enter_phone(message: Message, state: FSMContext):
     digits = re.sub(r"^\+", "", clean)
     # Паттерн: РБ (+375), РФ (+7/8), UA (+380), KZ (+7)
     valid = re.match(
-        r"^(\+?375\d{9}|80\d{9}|8\d{10}|\+?7\d{10}|\+?380\d{9}|\d{10,11})$",
+        r"^(\+?375\d{9}|80\d{9}|8\d{10}|\+?7\d{10}|\+?380\d{9})$",
         clean
     )
     if not valid:

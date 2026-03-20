@@ -29,7 +29,7 @@ from keyboards.admin_kb import (
 )
 from utils.admin_calendar import build_admin_calendar
 from utils.scheduler import cancel_all_jobs, schedule_all_jobs
-from handlers.user import format_date_ru
+from handlers.user import format_date_ru, post_schedule_to_channel
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -54,20 +54,8 @@ DEMO_DESCRIPTIONS = {
 }
 
 
-async def demo_intercept(callback: CallbackQuery) -> bool:
-    """Перехватить callback в демо-режиме и показать описание. Вернуть True если перехвачено."""
-    if not DEMO_MODE or is_admin(callback.from_user.id):
-        return False
-    desc = DEMO_DESCRIPTIONS.get(callback.data)
-    if not desc:
-        return False
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="◀ Назад в меню", callback_data="admin_menu")]
-    ])
-    await callback.message.edit_text(desc, reply_markup=kb)
-    await callback.answer()
-    return True
+
+
 
 
 def is_admin(user_id: int) -> bool:
@@ -906,6 +894,9 @@ async def admin_ban_from_schedule(callback: CallbackQuery, bot: Bot):
     if not appt or appt["user_id"] == 0:
         await callback.answer("Нельзя заблокировать — ручная запись без Telegram", show_alert=True)
         return
+    if appt["user_id"] in ADMIN_IDS:
+        await callback.answer("Нельзя заблокировать администратора", show_alert=True)
+        return
 
     await blacklist_add(
         user_id=appt["user_id"],
@@ -927,20 +918,18 @@ async def admin_ban_from_schedule(callback: CallbackQuery, bot: Bot):
         await post_schedule_to_channel(bot, result["date"])
 
     await callback.answer(f"✅ {appt['client_name']} заблокирован", show_alert=True)
-    await send_schedule(callback, appt["date"] if result else "")
+    date_str = appt["date"]
+    if date_str:
+        await send_schedule(callback, date_str)
 
 
 @router.message(Command("unban"))
 async def cmd_unban(message: Message):
     if not is_admin(message.from_user.id):
         return
-    parts = message.text.split()
-    if len(parts) < 2:
-        await message.answer("Использование: /unban_<user_id>")
-        return
     try:
-        user_id = int(parts[0].split("_")[1])
-    except Exception:
+        user_id = int(message.text.split("_", 1)[1])
+    except (IndexError, ValueError):
         await message.answer("Неверный формат. Используйте /unban_123456789")
         return
     await blacklist_remove(user_id)
