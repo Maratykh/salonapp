@@ -12,10 +12,6 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🗓 По неделям",        callback_data="admin_add_by_weekday"),
     )
     builder.row(
-        InlineKeyboardButton(text="🔒 Закрыть день",     callback_data="admin_close_day"),
-        InlineKeyboardButton(text="🔓 Открыть день",     callback_data="admin_open_day"),
-    )
-    builder.row(
         InlineKeyboardButton(text="📝 Записать клиента", callback_data="admin_manual_book"),
         InlineKeyboardButton(text="⏰ Слоты",            callback_data="admin_manage_slots"),
     )
@@ -23,10 +19,14 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def admin_settings_kb(repeat_on: bool, master_on: bool, dense_on: bool = False, loyalty_on: bool = False) -> InlineKeyboardMarkup:
+def admin_settings_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
-    builder.row(InlineKeyboardButton(text="📋 Контент", callback_data="admin_content"))
+    builder.row(InlineKeyboardButton(text="📋 Контент",  callback_data="admin_content"))
     builder.row(InlineKeyboardButton(text="🔧 Настройки", callback_data="admin_tweaks"))
+    builder.row(
+        InlineKeyboardButton(text="🔒 Закрыть день", callback_data="admin_close_day"),
+        InlineKeyboardButton(text="🔓 Открыть день", callback_data="admin_open_day"),
+    )
     builder.row(InlineKeyboardButton(text="◀ Назад", callback_data="admin_menu"))
     return builder.as_markup()
 
