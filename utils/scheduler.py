@@ -13,7 +13,7 @@ from database.db import (
     get_setting, get_service_by_key
 )
 from config import ADMIN_ID, ADMIN_IDS, SLOT_DURATION, MSG_REMINDER_24H, MSG_REPEAT_REMINDER, MSG_MASTER_30MIN
-from config import STUDIO_NAME, STUDIO_ADDRESS, TIMEZONE, BACKUP_CHANNEL_ID, BACKUP_HOUR, DB_PATH
+from config import STUDIO_NAME, STUDIO_ADDRESS, TIMEZONE, BACKUP_CHANNEL_ID, BACKUP_HOUR, DB_PATH, USE_POSTGRES
 
 logger = logging.getLogger(__name__)
 _scheduler: AsyncIOScheduler | None = None
@@ -258,21 +258,38 @@ async def send_backup(bot: Bot):
     """Отправить бэкап базы данных в канал."""
     if not BACKUP_CHANNEL_ID:
         return
-    import os
+    import os, tempfile
+    from aiogram.types import FSInputFile
+    now      = now_local()
+    date_str = now.strftime("%Y-%m-%d_%H-%M")
+    caption  = f"🗄 <b>Бэкап базы данных</b>\n📅 {now.strftime('%d.%m.%Y %H:%M')}"
     try:
-        if not os.path.exists(DB_PATH):
-            logger.warning("Файл БД не найден для бэкапа")
-            return
-        now = now_local()
-        date_str = now.strftime("%Y-%m-%d_%H-%M")
-        from aiogram.types import FSInputFile
-        db_file = FSInputFile(DB_PATH, filename=f"backup_{date_str}.db")
-        await bot.send_document(
-            BACKUP_CHANNEL_ID,
-            db_file,
-            caption=f"🗄 <b>Бэкап базы данных</b>\n📅 {now.strftime('%d.%m.%Y %H:%M')}",
-            parse_mode="HTML"
-        )
+        if USE_POSTGRES:
+            from config import DATABASE_URL, DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
+            dsn = DATABASE_URL or f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+            # Парсим dsn для pg_dump
+            import urllib.parse
+            r = urllib.parse.urlparse(dsn)
+            env = os.environ.copy()
+            env["PGPASSWORD"] = r.password or DB_PASSWORD
+            dump_path = os.path.join(tempfile.gettempdir(), f"backup_{date_str}.sql")
+            ret = os.system(
+                f"pg_dump -h {r.hostname or DB_HOST} -p {r.port or DB_PORT} "
+                f"-U {r.username or DB_USER} {r.path.lstrip('/') or DB_NAME} "
+                f"> {dump_path}"
+            )
+            if ret != 0 or not os.path.exists(dump_path):
+                logger.error("pg_dump завершился с ошибкой")
+                return
+            db_file = FSInputFile(dump_path, filename=f"backup_{date_str}.sql")
+            await bot.send_document(BACKUP_CHANNEL_ID, db_file, caption=caption, parse_mode="HTML")
+            os.remove(dump_path)
+        else:
+            if not os.path.exists(DB_PATH):
+                logger.warning("Файл БД не найден для бэкапа")
+                return
+            db_file = FSInputFile(DB_PATH, filename=f"backup_{date_str}.db")
+            await bot.send_document(BACKUP_CHANNEL_ID, db_file, caption=caption, parse_mode="HTML")
         logger.info(f"Бэкап отправлен в {BACKUP_CHANNEL_ID}")
     except Exception as e:
         logger.error(f"Ошибка отправки бэкапа: {e}")

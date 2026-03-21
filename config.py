@@ -6,20 +6,30 @@ import os
 
 # ---- Telegram ----
 BOT_TOKEN  = os.getenv("BOT_TOKEN", "")
-# Несколько админов через запятую: "123456,789012"
 _admin_ids = os.getenv("ADMIN_IDS", os.getenv("ADMIN_ID", "0"))
 ADMIN_IDS  = [int(x.strip()) for x in _admin_ids.split(",") if x.strip()]
-ADMIN_ID   = ADMIN_IDS[0] if ADMIN_IDS else 0  # первый — главный (для обратной совместимости)
-
-# ---- Бэкап ----
-BACKUP_CHANNEL_ID  = os.getenv("BACKUP_CHANNEL_ID", "")   # канал для бэкапов БД
-BACKUP_HOUR        = 3
-SCHEDULE_CHANNEL_ID = os.getenv("SCHEDULE_CHANNEL_ID", "") # канал для расписания (опционально)
+ADMIN_ID   = ADMIN_IDS[0] if ADMIN_IDS else 0
 
 # ---- База данных ----
-DB_PATH = "manicure_bot.db"
+# PostgreSQL включается если задан DATABASE_URL или DB_HOST
+DATABASE_URL = os.getenv("DATABASE_URL", "")          # postgresql://user:pass@host/db
+DB_HOST      = os.getenv("DB_HOST",     "localhost")
+DB_PORT      = int(os.getenv("DB_PORT", "5432"))
+DB_NAME      = os.getenv("DB_NAME",     "salonapp")
+DB_USER      = os.getenv("DB_USER",     "postgres")
+DB_PASSWORD  = os.getenv("DB_PASSWORD", "")
+DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
+# Автоопределение: если задан DATABASE_URL или DB_HOST != localhost — используем PG
+USE_POSTGRES = bool(DATABASE_URL or os.getenv("DB_HOST") or os.getenv("DB_PASSWORD"))
+# SQLite fallback (используется только если USE_POSTGRES=False)
+DB_PATH      = os.getenv("DB_PATH", "manicure_bot.db")
 
-# ---- Демо-режим ----
+# ---- Бэкап ----
+BACKUP_CHANNEL_ID   = os.getenv("BACKUP_CHANNEL_ID", "")
+BACKUP_HOUR         = int(os.getenv("BACKUP_HOUR", "3"))
+SCHEDULE_CHANNEL_ID = os.getenv("SCHEDULE_CHANNEL_ID", "")
+
+
 DEMO_MODE    = os.getenv("DEMO_MODE", "False").lower() == "true"
 DEMO_CONTACT = os.getenv("DEMO_CONTACT", "@ваш_username")
 SLOT_DURATION = 15   # длительность одного слота в минутах
