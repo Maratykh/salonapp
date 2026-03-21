@@ -27,6 +27,11 @@ logger = logging.getLogger(__name__)
 async def main():
     logger.info("Запуск бота...")
 
+    # Создаём папку для базы данных если нет
+    import os
+    from config import DB_PATH
+    os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
+
     # Инициализация базы данных
     await init_db()
     logger.info("База данных инициализирована")

@@ -1,0 +1,34 @@
+services:
+  # ================================================================
+  # Шаблон — скопируйте блок для каждого нового мастера
+  # ================================================================
+
+  bot_master1:
+    build: .
+    restart: always
+    environment:
+      - BOT_TOKEN=токен_мастера_1
+      - ADMIN_IDS=123456789
+      - STUDIO_NAME=Студия Маша
+      - STUDIO_ADDRESS=г. Минск, ул. Ленина 1
+      - STUDIO_MAPS_LINK=https://maps.app.goo.gl/...
+      - PORTFOLIO_LINK=https://www.instagram.com/мастер1/
+      - TIMEZONE=Europe/Minsk
+      - SLOT_DURATION=15
+    volumes:
+      - ./data/master1:/app/data
+
+  bot_master2:
+    build: .
+    restart: always
+    environment:
+      - BOT_TOKEN=токен_мастера_2
+      - ADMIN_IDS=987654321
+      - STUDIO_NAME=Студия Катя
+      - STUDIO_ADDRESS=г. Минск, ул. Мира 5
+      - STUDIO_MAPS_LINK=https://maps.app.goo.gl/...
+      - PORTFOLIO_LINK=https://www.instagram.com/мастер2/
+      - TIMEZONE=Europe/Minsk
+      - SLOT_DURATION=15
+    volumes:
+      - ./data/master2:/app/data

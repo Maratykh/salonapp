@@ -1,569 +1,690 @@
-# database/db.py — PostgreSQL + SQLite fallback
-from config import SLOT_DURATION, DEFAULT_SERVICES, TIMEZONE, USE_POSTGRES
-from datetime import datetime
-import pytz, logging
+# database/db.py
 
-logger = logging.getLogger(__name__)
-_pool = None
+import aiosqlite
+from config import DB_PATH, SLOT_DURATION, DEFAULT_SERVICES, TIMEZONE
+from datetime import datetime
+import pytz
 
 
 def _now_local() -> str:
-    return datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y-%m-%d %H:%M:%S")
+    tz = pytz.timezone(TIMEZONE)
+    return datetime.now(tz).strftime("%Y-%m-%d %H:%M:%S")
+
 
 def _today_local() -> str:
-    return datetime.now(pytz.timezone(TIMEZONE)).strftime("%Y-%m-%d")
+    tz = pytz.timezone(TIMEZONE)
+    return datetime.now(tz).strftime("%Y-%m-%d")
 
 
 async def init_db():
-    global _pool
-    if USE_POSTGRES:
-        await _init_postgres()
-    else:
-        await _init_sqlite()
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.executescript("""
+            CREATE TABLE IF NOT EXISTS schedule (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                date      TEXT NOT NULL,
+                time_slot TEXT NOT NULL,
+                is_booked INTEGER DEFAULT 0,
+                is_closed INTEGER DEFAULT 0,
+                UNIQUE(date, time_slot)
+            );
+            CREATE TABLE IF NOT EXISTS appointments (
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id          INTEGER NOT NULL,
+                username         TEXT,
+                client_name      TEXT NOT NULL,
+                phone            TEXT NOT NULL DEFAULT '—',
+                date             TEXT NOT NULL,
+                time_slot        TEXT NOT NULL,
+                service_key      TEXT DEFAULT '',
+                service_name     TEXT DEFAULT '',
+                service_price    INTEGER DEFAULT 0,
+                slots_count      INTEGER DEFAULT 1,
+                attended         INTEGER DEFAULT NULL,
+                created_at       TEXT DEFAULT (datetime('now','localtime')),
+                reminder_job_id  TEXT,
+                repeat_job_id    TEXT,
+                master_job_id    TEXT
+            );
+            CREATE TABLE IF NOT EXISTS services (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                key          TEXT UNIQUE NOT NULL,
+                name         TEXT NOT NULL,
+                price        INTEGER NOT NULL DEFAULT 0,
+                slots        INTEGER NOT NULL DEFAULT 1,
+                duration_str TEXT DEFAULT '',
+                emoji        TEXT DEFAULT '💅',
+                repeat_days  INTEGER DEFAULT 0,
+                is_active    INTEGER DEFAULT 1
+            );
+            CREATE TABLE IF NOT EXISTS settings (
+                key   TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS blacklist (
+                user_id     INTEGER PRIMARY KEY,
+                username    TEXT,
+                client_name TEXT,
+                reason      TEXT DEFAULT '',
+                created_at  TEXT DEFAULT (datetime('now','localtime'))
+            );
+        """)
+        for col, dfn in [
+            ("phone",         "TEXT NOT NULL DEFAULT '—'"),
+            ("attended",      "INTEGER DEFAULT NULL"),
+            ("repeat_job_id", "TEXT"),
+            ("master_job_id", "TEXT"),
+        ]:
+            try:
+                await db.execute(f"ALTER TABLE appointments ADD COLUMN {col} {dfn}")
+            except Exception:
+                pass
+        await db.commit()
     await seed_services()
     await seed_settings()
 
 
-# ── PostgreSQL ────────────────────────────────────────────────────────
-
-async def _init_postgres():
-    global _pool
-    import asyncpg, os
-    from config import DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_POOL_SIZE, DATABASE_URL
-    dsn = DATABASE_URL or f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-    _pool = await asyncpg.create_pool(dsn=dsn, min_size=2, max_size=DB_POOL_SIZE)
-    sql_file = os.path.join(os.path.dirname(__file__), '..', 'migrations', '001_initial.sql')
-    if os.path.exists(sql_file):
-        async with _pool.acquire() as c:
-            await c.execute(open(sql_file).read())
-    logger.info("PostgreSQL ready")
-
-
-class _PG:
-    def __init__(self): self._c = None
-    async def __aenter__(self):
-        self._c = await _pool.acquire(); return self._c
-    async def __aexit__(self, *a): await _pool.release(self._c)
-
-def pg(): return _PG()
+async def seed_services():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT COUNT(*) FROM services")
+        count = (await cur.fetchone())[0]
+        if count == 0:
+            for svc in DEFAULT_SERVICES:
+                await db.execute(
+                    "INSERT OR IGNORE INTO services"
+                    "(key,name,price,slots,duration_str,emoji,repeat_days) VALUES(?,?,?,?,?,?,?)",
+                    (svc["key"], svc["name"], svc["price"], svc["slots"],
+                     svc["duration_str"], svc["emoji"], svc.get("repeat_days", 0)))
+            await db.commit()
 
 
-# ── SQLite ────────────────────────────────────────────────────────────
-
-async def _init_sqlite():
-    import aiosqlite
-    from config import DB_PATH
-    async with aiosqlite.connect(DB_PATH) as d:
-        await d.executescript("""
-            CREATE TABLE IF NOT EXISTS schedule(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL, time_slot TEXT NOT NULL,
-                is_booked INTEGER DEFAULT 0, is_closed INTEGER DEFAULT 0,
-                UNIQUE(date,time_slot));
-            CREATE TABLE IF NOT EXISTS appointments(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL, username TEXT,
-                client_name TEXT NOT NULL, phone TEXT NOT NULL DEFAULT '—',
-                date TEXT NOT NULL, time_slot TEXT NOT NULL,
-                service_key TEXT DEFAULT '', service_name TEXT DEFAULT '',
-                service_price INTEGER DEFAULT 0, slots_count INTEGER DEFAULT 1,
-                attended INTEGER DEFAULT NULL,
-                created_at TEXT DEFAULT (datetime('now','localtime')),
-                reminder_job_id TEXT, repeat_job_id TEXT, master_job_id TEXT);
-            CREATE TABLE IF NOT EXISTS services(
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                key TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
-                price INTEGER NOT NULL DEFAULT 0, slots INTEGER NOT NULL DEFAULT 1,
-                duration_str TEXT DEFAULT '', emoji TEXT DEFAULT '💅',
-                repeat_days INTEGER DEFAULT 0, is_active INTEGER DEFAULT 1);
-            CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS blacklist(
-                user_id INTEGER PRIMARY KEY, username TEXT, client_name TEXT,
-                reason TEXT DEFAULT '',
-                created_at TEXT DEFAULT (datetime('now','localtime')));
-        """)
-        for col, dfn in [("phone","TEXT NOT NULL DEFAULT '—'"),
-                         ("attended","INTEGER DEFAULT NULL"),
-                         ("repeat_job_id","TEXT"),("master_job_id","TEXT")]:
-            try: await d.execute(f"ALTER TABLE appointments ADD COLUMN {col} {dfn}")
-            except: pass
-        await d.commit()
-
-
-# ── Универсальный адаптер ─────────────────────────────────────────────
-
-def _pg(sql):
-    i=0; r=[]
-    for c in sql:
-        if c=='?': i+=1; r.append(f'${i}')
-        else: r.append(c)
-    return ''.join(r)
-
-
-class _Conn:
-    def __init__(self, c, is_pg): self._c=c; self._pg=is_pg
-    async def one(self, sql, *a):
-        if self._pg: return await self._c.fetchrow(_pg(sql),*a)
-        cur=await self._c.execute(sql,a); return await cur.fetchone()
-    async def all(self, sql, *a):
-        if self._pg: return await self._c.fetch(_pg(sql),*a)
-        cur=await self._c.execute(sql,a); return await cur.fetchall()
-    async def run(self, sql, *a):
-        if self._pg: await self._c.execute(_pg(sql),*a)
-        else: await self._c.execute(sql,a); await self._c.commit()
-    async def val(self, sql, *a):
-        if self._pg: return await self._c.fetchval(_pg(sql),*a)
-        cur=await self._c.execute(sql,a); r=await cur.fetchone(); return r[0] if r else None
-
-
-class _Ctx:
-    def __init__(self): self._c=None; self._sl=None
-    async def __aenter__(self):
-        if USE_POSTGRES:
-            self._c=await _pool.acquire(); return _Conn(self._c,True)
-        import aiosqlite
-        from config import DB_PATH
-        self._sl=aiosqlite.connect(DB_PATH)
-        c=await self._sl.__aenter__(); return _Conn(c,False)
-    async def __aexit__(self,*a):
-        if USE_POSTGRES: await _pool.release(self._c)
-        else: await self._sl.__aexit__(*a)
-
-def db(): return _Ctx()
+async def seed_settings():
+    defaults = {
+        "repeat_reminders_enabled": "1",
+        "master_30min_enabled":     "1",
+        "dense_schedule":           "0",
+        "loyalty_enabled":          "0",
+        "loyalty_mode":             "discount",
+        "loyalty_visits":           "3",
+        "loyalty_discount":         "10",
+    }
+    async with aiosqlite.connect(DB_PATH) as db:
+        for key, value in defaults.items():
+            await db.execute(
+                "INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))
+        await db.commit()
 
 
 # ── Настройки ─────────────────────────────────────────────────────────
 
-async def get_setting(key):
-    async with db() as c: r=await c.one("SELECT value FROM settings WHERE key=?",key)
-    return r[0] if r else "0"
+async def get_setting(key: str) -> str:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT value FROM settings WHERE key=?", (key,))
+        row = await cur.fetchone()
+    return row[0] if row else "0"
 
-async def set_setting(key, value):
-    async with db() as c:
-        if USE_POSTGRES:
-            await c.run("INSERT INTO settings(key,value) VALUES(?,?) "
-                        "ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value", key, value)
-        else:
-            await c.run("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", key, value)
 
-async def seed_settings():
-    defs = {"repeat_reminders_enabled":"1","master_30min_enabled":"1",
-            "dense_schedule":"0","loyalty_enabled":"0","loyalty_mode":"discount",
-            "loyalty_visits":"3","loyalty_discount":"10"}
-    async with db() as c:
-        for k,v in defs.items():
-            if USE_POSTGRES:
-                await c.run("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT DO NOTHING",k,v)
-            else:
-                await c.run("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)",k,v)
+async def set_setting(key: str, value: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (key, value))
+        await db.commit()
 
 
 # ── Услуги ────────────────────────────────────────────────────────────
 
-async def get_services(active_only=True):
-    q="SELECT id,key,name,price,slots,duration_str,emoji,repeat_days,is_active FROM services"
-    if active_only: q+=" WHERE is_active=TRUE" if USE_POSTGRES else " WHERE is_active=1"
-    q+=" ORDER BY id"
-    async with db() as c: rows=await c.all(q)
-    return [{"id":r[0],"key":r[1],"name":r[2],"price":r[3],"slots":r[4],
-             "duration_str":r[5],"emoji":r[6],"repeat_days":r[7],"is_active":bool(r[8])} for r in rows]
+async def get_services(active_only: bool = True) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        q = "SELECT id,key,name,price,slots,duration_str,emoji,repeat_days,is_active FROM services"
+        if active_only:
+            q += " WHERE is_active=1"
+        q += " ORDER BY id"
+        cur = await db.execute(q)
+        rows = await cur.fetchall()
+    return [{"id": r[0], "key": r[1], "name": r[2], "price": r[3],
+             "slots": r[4], "duration_str": r[5], "emoji": r[6],
+             "repeat_days": r[7], "is_active": bool(r[8])} for r in rows]
 
-async def get_service_by_key(key):
-    async with db() as c:
-        r=await c.one("SELECT id,key,name,price,slots,duration_str,emoji,repeat_days,is_active "
-                      "FROM services WHERE key=?",key)
-    if not r: return None
-    return {"id":r[0],"key":r[1],"name":r[2],"price":r[3],"slots":r[4],
-            "duration_str":r[5],"emoji":r[6],"repeat_days":r[7],"is_active":bool(r[8])}
 
-async def add_service(key,name,price,slots,duration_str,emoji,repeat_days):
+async def get_service_by_key(key: str) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id,key,name,price,slots,duration_str,emoji,repeat_days,is_active "
+            "FROM services WHERE key=?", (key,))
+        row = await cur.fetchone()
+    if not row:
+        return None
+    return {"id": row[0], "key": row[1], "name": row[2], "price": row[3],
+            "slots": row[4], "duration_str": row[5], "emoji": row[6],
+            "repeat_days": row[7], "is_active": bool(row[8])}
+
+
+async def add_service(key, name, price, slots, duration_str, emoji, repeat_days) -> bool:
     try:
-        async with db() as c:
-            await c.run("INSERT INTO services(key,name,price,slots,duration_str,emoji,repeat_days) "
-                        "VALUES(?,?,?,?,?,?,?)",key,name,price,slots,duration_str,emoji,repeat_days)
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT INTO services(key,name,price,slots,duration_str,emoji,repeat_days) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (key, name, price, slots, duration_str, emoji, repeat_days))
+            await db.commit()
         return True
-    except: return False
+    except Exception:
+        return False
 
-async def update_service(svc_id,name,price,slots,duration_str,emoji,repeat_days):
-    async with db() as c:
-        await c.run("UPDATE services SET name=?,price=?,slots=?,duration_str=?,emoji=?,repeat_days=? "
-                    "WHERE id=?",name,price,slots,duration_str,emoji,repeat_days,svc_id)
 
-async def toggle_service(svc_id):
-    async with db() as c:
-        if USE_POSTGRES: await c.run("UPDATE services SET is_active=NOT is_active WHERE id=?",svc_id)
-        else: await c.run("UPDATE services SET is_active=CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id=?",svc_id)
+async def update_service(svc_id, name, price, slots, duration_str, emoji, repeat_days):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE services SET name=?,price=?,slots=?,duration_str=?,emoji=?,repeat_days=? "
+            "WHERE id=?", (name, price, slots, duration_str, emoji, repeat_days, svc_id))
+        await db.commit()
 
-async def seed_services():
-    async with db() as c:
-        r=await c.one("SELECT COUNT(*) FROM services"); count=r[0] if r else 0
-        if count==0:
-            for s in DEFAULT_SERVICES:
-                if USE_POSTGRES:
-                    await c.run("INSERT INTO services(key,name,price,slots,duration_str,emoji,repeat_days) "
-                                "VALUES(?,?,?,?,?,?,?) ON CONFLICT DO NOTHING",
-                                s["key"],s["name"],s["price"],s["slots"],s["duration_str"],s["emoji"],s.get("repeat_days",0))
-                else:
-                    await c.run("INSERT OR IGNORE INTO services(key,name,price,slots,duration_str,emoji,repeat_days) "
-                                "VALUES(?,?,?,?,?,?,?)",
-                                s["key"],s["name"],s["price"],s["slots"],s["duration_str"],s["emoji"],s.get("repeat_days",0))
+
+async def toggle_service(svc_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE services SET is_active=CASE WHEN is_active=1 THEN 0 ELSE 1 END WHERE id=?",
+            (svc_id,))
+        await db.commit()
 
 
 # ── Расписание ────────────────────────────────────────────────────────
 
-def generate_slots(start_time, end_time):
-    slots=[]; sh,sm=map(int,start_time.split(":")); eh,em=map(int,end_time.split(":"))
-    cur=sh*60+sm; end=eh*60+em
-    while cur<end: h,m=divmod(cur,60); slots.append(f"{h:02d}:{m:02d}"); cur+=SLOT_DURATION
+def generate_slots(start_time: str, end_time: str) -> list:
+    slots = []
+    sh, sm = map(int, start_time.split(":"))
+    eh, em = map(int, end_time.split(":"))
+    cur = sh * 60 + sm
+    end = eh * 60 + em
+    while cur < end:
+        h, m = divmod(cur, 60)
+        slots.append(f"{h:02d}:{m:02d}")
+        cur += SLOT_DURATION
     return slots
 
-async def add_working_day(date, start_time, end_time):
-    slots=generate_slots(start_time,end_time); added=0
-    async with db() as c:
-        for s in slots:
+
+async def add_working_day(date: str, start_time: str, end_time: str) -> int:
+    slots = generate_slots(start_time, end_time)
+    added = 0
+    async with aiosqlite.connect(DB_PATH) as db:
+        for slot in slots:
             try:
-                if USE_POSTGRES:
-                    await c.run("INSERT INTO schedule(date,time_slot) VALUES(?,?) ON CONFLICT DO NOTHING",date,s)
-                else:
-                    await c.run("INSERT OR IGNORE INTO schedule(date,time_slot) VALUES(?,?)",date,s)
-                added+=1
-            except: pass
+                await db.execute(
+                    "INSERT OR IGNORE INTO schedule(date,time_slot) VALUES(?,?)", (date, slot))
+                added += 1
+            except Exception:
+                pass
+        await db.commit()
     return added
 
-async def add_slot(date, time_slot):
-    try:
-        async with db() as c:
-            if USE_POSTGRES: await c.run("INSERT INTO schedule(date,time_slot) VALUES(?,?) ON CONFLICT DO NOTHING",date,time_slot)
-            else: await c.run("INSERT OR IGNORE INTO schedule(date,time_slot) VALUES(?,?)",date,time_slot)
-        return True
-    except: return False
 
-async def remove_slot(date, time_slot):
-    async with db() as c:
-        r=await c.one("SELECT is_booked FROM schedule WHERE date=? AND time_slot=?",date,time_slot)
-        if not r or r[0]: return False
-        await c.run("DELETE FROM schedule WHERE date=? AND time_slot=?",date,time_slot)
+async def add_slot(date: str, time_slot: str) -> bool:
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO schedule(date,time_slot) VALUES(?,?)", (date, time_slot))
+            await db.commit()
+        return True
+    except Exception:
+        return False
+
+
+async def remove_slot(date: str, time_slot: str) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT is_booked FROM schedule WHERE date=? AND time_slot=?", (date, time_slot))
+        row = await cur.fetchone()
+        if not row or row[0] == 1:
+            return False
+        await db.execute("DELETE FROM schedule WHERE date=? AND time_slot=?", (date, time_slot))
+        await db.commit()
     return True
 
-async def close_day(date):
-    async with db() as c:
-        if USE_POSTGRES: await c.run("UPDATE schedule SET is_closed=TRUE WHERE date=? AND is_booked=FALSE",date)
-        else: await c.run("UPDATE schedule SET is_closed=1 WHERE date=? AND is_booked=0",date)
 
-async def open_day(date):
-    async with db() as c:
-        if USE_POSTGRES: await c.run("UPDATE schedule SET is_closed=FALSE WHERE date=?",date)
-        else: await c.run("UPDATE schedule SET is_closed=0 WHERE date=?",date)
+async def close_day(date: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE schedule SET is_closed=1 WHERE date=? AND is_booked=0", (date,))
+        await db.commit()
 
-async def get_available_dates():
-    now=_now_local(); today=_today_local()
-    async with db() as c:
-        if USE_POSTGRES:
-            rows=await c.all("""SELECT DISTINCT date FROM schedule
-                WHERE is_booked=FALSE AND is_closed=FALSE
-                AND (date||' '||time_slot)>? AND date::date<(?::date+'31 days'::interval)
-                ORDER BY date""",now,today)
-        else:
-            rows=await c.all("""SELECT DISTINCT date FROM schedule
-                WHERE is_booked=0 AND is_closed=0
-                AND (date||' '||time_slot)>? AND date<date(?,'+'||31||' days')
-                ORDER BY date""",now,today)
+
+async def open_day(date: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("UPDATE schedule SET is_closed=0 WHERE date=?", (date,))
+        await db.commit()
+
+
+async def get_available_dates() -> list:
+    now = _now_local()
+    today = _today_local()
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("""
+            SELECT DISTINCT date FROM schedule
+            WHERE is_booked=0 AND is_closed=0
+              AND (date||' '||time_slot) > ?
+              AND date < date(?, '+31 days')
+            ORDER BY date
+        """, (now, today))
+        rows = await cur.fetchall()
     return [r[0] for r in rows]
 
-async def get_slots_for_date(date):
-    async with db() as c:
-        rows=await c.all("SELECT time_slot,is_booked,is_closed FROM schedule WHERE date=? ORDER BY time_slot",date)
-    return [{"time":r[0],"is_booked":bool(r[1]),"is_closed":bool(r[2])} for r in rows]
 
-async def get_free_slots(date):
-    async with db() as c:
-        if USE_POSTGRES:
-            rows=await c.all("SELECT time_slot FROM schedule WHERE date=? AND is_booked=FALSE AND is_closed=FALSE ORDER BY time_slot",date)
-        else:
-            rows=await c.all("SELECT time_slot FROM schedule WHERE date=? AND is_booked=0 AND is_closed=0 ORDER BY time_slot",date)
+async def get_slots_for_date(date: str) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT time_slot,is_booked,is_closed FROM schedule WHERE date=? ORDER BY time_slot",
+            (date,))
+        rows = await cur.fetchall()
+    return [{"time": r[0], "is_booked": bool(r[1]), "is_closed": bool(r[2])} for r in rows]
+
+
+async def get_free_slots(date: str) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT time_slot FROM schedule "
+            "WHERE date=? AND is_booked=0 AND is_closed=0 ORDER BY time_slot", (date,))
+        rows = await cur.fetchall()
     return [r[0] for r in rows]
 
-async def get_free_slots_for_service(date, slots_needed):
-    free=await get_free_slots(date)
-    if slots_needed<=1: return free
-    free_set=set(free); result=[]
+
+async def get_free_slots_for_service(date: str, slots_needed: int) -> list:
+    free = await get_free_slots(date)
+    if slots_needed <= 1:
+        return free
+    free_set = set(free)
+    result = []
     for start in free:
-        h,m=map(int,start.split(":")); ok=True
-        for i in range(1,slots_needed):
-            total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-            if slot not in free_set: ok=False; break
-        if ok: result.append(start)
+        h, m = map(int, start.split(":"))
+        ok = True
+        for i in range(1, slots_needed):
+            total = h * 60 + m + i * SLOT_DURATION
+            slot = f"{total // 60:02d}:{total % 60:02d}"
+            if slot not in free_set:
+                ok = False
+                break
+        if ok:
+            result.append(start)
     return result
+
+
+async def get_next_consecutive_slot(date: str, slots_needed: int) -> str | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT time_slot,slots_count FROM appointments WHERE date=? ORDER BY time_slot DESC LIMIT 1",
+            (date,))
+        last = await cur.fetchone()
+        cur = await db.execute(
+            "SELECT time_slot FROM schedule WHERE date=? AND is_booked=0 AND is_closed=0 ORDER BY time_slot",
+            (date,))
+        free_rows = await cur.fetchall()
+    free = [r[0] for r in free_rows]
+    if not free:
+        return None
+    free_set = set(free)
+    after_time = None
+    if last:
+        h, m = map(int, last[0].split(":"))
+        total = h * 60 + m + (last[1] or 1) * SLOT_DURATION
+        after_h, after_m = divmod(total, 60)
+        after_time = f"{after_h:02d}:{after_m:02d}"
+    candidates = [s for s in free if s >= after_time] if after_time else free
+    if not candidates:
+        candidates = free
+    for start in candidates:
+        h, m = map(int, start.split(":"))
+        ok = True
+        for i in range(1, slots_needed):
+            total = h * 60 + m + i * SLOT_DURATION
+            slot = f"{total // 60:02d}:{total % 60:02d}"
+            if slot not in free_set:
+                ok = False
+                break
+        if ok:
+            return start
+    return None
 
 
 # ── Записи ────────────────────────────────────────────────────────────
 
-async def get_user_appointment(user_id):
-    async with db() as c:
-        r=await c.one("SELECT id,date,time_slot,client_name,phone,reminder_job_id,"
-                      "service_name,service_price,slots_count,service_key "
-                      "FROM appointments WHERE user_id=? AND (date||' '||time_slot)>=? "
-                      "ORDER BY date,time_slot LIMIT 1", user_id, _now_local())
-    if r: return {"id":r[0],"date":r[1],"time_slot":r[2],"client_name":r[3],"phone":r[4],
-                  "reminder_job_id":r[5],"service_name":r[6],"service_price":r[7],
-                  "slots_count":r[8],"service_key":r[9]}
+async def get_user_appointment(user_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id,date,time_slot,client_name,phone,reminder_job_id,"
+            "service_name,service_price,slots_count,service_key "
+            "FROM appointments WHERE user_id=? "
+            "AND (date||' '||time_slot) >= ? "
+            "ORDER BY date,time_slot LIMIT 1",
+            (user_id, _now_local()))
+        row = await cur.fetchone()
+    if row:
+        return {"id": row[0], "date": row[1], "time_slot": row[2],
+                "client_name": row[3], "phone": row[4], "reminder_job_id": row[5],
+                "service_name": row[6], "service_price": row[7],
+                "slots_count": row[8], "service_key": row[9]}
     return None
 
 
-async def create_appointment(user_id, username, client_name, phone, date, time_slot,
-                              service_key="", service_name="", service_price=0, slots_count=1):
+async def create_appointment(
+    user_id, username, client_name, phone, date, time_slot,
+    service_key="", service_name="", service_price=0, slots_count=1
+) -> int | None:
     try:
-        if USE_POSTGRES:
-            async with pg() as conn:
-                async with conn.transaction():
-                    h,m=map(int,time_slot.split(":"))
-                    for i in range(slots_count):
-                        total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                        r=await conn.fetchrow(
-                            "SELECT is_booked,is_closed FROM schedule WHERE date=$1 AND time_slot=$2 FOR UPDATE",
-                            date,slot)
-                        if not r or r[0] or r[1]: raise Exception("unavailable")
-                    for i in range(slots_count):
-                        total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                        await conn.execute("UPDATE schedule SET is_booked=TRUE WHERE date=$1 AND time_slot=$2",date,slot)
-                    return await conn.fetchval(
-                        "INSERT INTO appointments(user_id,username,client_name,phone,date,time_slot,"
-                        "service_key,service_name,service_price,slots_count) "
-                        "VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
-                        user_id,username,client_name,phone,date,time_slot,
-                        service_key,service_name,service_price,slots_count)
-        else:
-            import aiosqlite
-            from config import DB_PATH
-            async with aiosqlite.connect(DB_PATH) as d:
-                await d.execute("BEGIN EXCLUSIVE")
-                h,m=map(int,time_slot.split(":"))
-                for i in range(slots_count):
-                    total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                    cur=await d.execute("SELECT is_booked,is_closed FROM schedule WHERE date=? AND time_slot=?",(date,slot))
-                    r=await cur.fetchone()
-                    if not r or r[0]==1 or r[1]==1: await d.execute("ROLLBACK"); return None
-                for i in range(slots_count):
-                    total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                    await d.execute("UPDATE schedule SET is_booked=1 WHERE date=? AND time_slot=?",(date,slot))
-                cur=await d.execute(
-                    "INSERT INTO appointments(user_id,username,client_name,phone,date,time_slot,"
-                    "service_key,service_name,service_price,slots_count) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                    (user_id,username,client_name,phone,date,time_slot,service_key,service_name,service_price,slots_count))
-                appt_id=cur.lastrowid; await d.execute("COMMIT"); return appt_id
-    except: return None
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("BEGIN EXCLUSIVE")
+            h, m = map(int, time_slot.split(":"))
+            for i in range(slots_count):
+                total = h * 60 + m + i * SLOT_DURATION
+                slot = f"{total // 60:02d}:{total % 60:02d}"
+                cur = await db.execute(
+                    "SELECT is_booked,is_closed FROM schedule WHERE date=? AND time_slot=?",
+                    (date, slot))
+                row = await cur.fetchone()
+                if not row or row[0] == 1 or row[1] == 1:
+                    await db.execute("ROLLBACK")
+                    return None
+            for i in range(slots_count):
+                total = h * 60 + m + i * SLOT_DURATION
+                slot = f"{total // 60:02d}:{total % 60:02d}"
+                await db.execute(
+                    "UPDATE schedule SET is_booked=1 WHERE date=? AND time_slot=?", (date, slot))
+            cur = await db.execute(
+                "INSERT INTO appointments"
+                "(user_id,username,client_name,phone,date,time_slot,"
+                "service_key,service_name,service_price,slots_count) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (user_id, username, client_name, phone, date, time_slot,
+                 service_key, service_name, service_price, slots_count))
+            appt_id = cur.lastrowid
+            await db.execute("COMMIT")
+        return appt_id
+    except Exception:
+        return None
 
 
-async def cancel_appointment(appointment_id):
+async def cancel_appointment(appointment_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("BEGIN EXCLUSIVE")
+        cur = await db.execute(
+            "SELECT user_id,date,time_slot,reminder_job_id,slots_count,"
+            "repeat_job_id,master_job_id FROM appointments WHERE id=?", (appointment_id,))
+        row = await cur.fetchone()
+        if not row:
+            await db.execute("ROLLBACK")
+            return None
+        user_id, date, time_slot, reminder_job_id, slots_count, repeat_job_id, master_job_id = row
+        slots_count = slots_count or 1
+        h, m = map(int, time_slot.split(":"))
+        for i in range(slots_count):
+            total = h * 60 + m + i * SLOT_DURATION
+            slot = f"{total // 60:02d}:{total % 60:02d}"
+            await db.execute(
+                "UPDATE schedule SET is_booked=0 WHERE date=? AND time_slot=?", (date, slot))
+        await db.execute("DELETE FROM appointments WHERE id=?", (appointment_id,))
+        await db.execute("COMMIT")
+    return {"user_id": user_id, "date": date, "time_slot": time_slot,
+            "reminder_job_id": reminder_job_id, "repeat_job_id": repeat_job_id,
+            "master_job_id": master_job_id}
+
+
+async def get_appointment_by_id(appointment_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT id,user_id,date,time_slot,client_name,service_name,service_key,slots_count "
+            "FROM appointments WHERE id=?", (appointment_id,))
+        row = await cur.fetchone()
+    if not row:
+        return None
+    return {"id": row[0], "user_id": row[1], "date": row[2], "time_slot": row[3],
+            "client_name": row[4], "service_name": row[5],
+            "service_key": row[6], "slots_count": row[7] or 1}
+
+
+async def cancel_appointment_by_user(user_id: int) -> dict | None:
+    appt = await get_user_appointment(user_id)
+    if not appt:
+        return None
+    return await cancel_appointment(appt["id"])
+
+
+async def reschedule_appointment(appointment_id: int, new_date: str, new_time_slot: str) -> dict | None:
     try:
-        if USE_POSTGRES:
-            async with pg() as conn:
-                async with conn.transaction():
-                    r=await conn.fetchrow(
-                        "SELECT user_id,date,time_slot,reminder_job_id,slots_count,"
-                        "repeat_job_id,master_job_id FROM appointments WHERE id=$1 FOR UPDATE",
-                        appointment_id)
-                    if not r: return None
-                    uid,date,ts,rjid,sc,rpjid,mjid=r[0],r[1],r[2],r[3],r[4],r[5],r[6]; sc=sc or 1
-                    h,m=map(int,ts.split(":"))
-                    for i in range(sc):
-                        total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                        await conn.execute("UPDATE schedule SET is_booked=FALSE WHERE date=$1 AND time_slot=$2",date,slot)
-                    await conn.execute("DELETE FROM appointments WHERE id=$1",appointment_id)
-        else:
-            import aiosqlite
-            from config import DB_PATH
-            async with aiosqlite.connect(DB_PATH) as d:
-                await d.execute("BEGIN EXCLUSIVE")
-                cur=await d.execute("SELECT user_id,date,time_slot,reminder_job_id,slots_count,"
-                                    "repeat_job_id,master_job_id FROM appointments WHERE id=?",(appointment_id,))
-                r=await cur.fetchone()
-                if not r: await d.execute("ROLLBACK"); return None
-                uid,date,ts,rjid,sc,rpjid,mjid=r; sc=sc or 1
-                h,m=map(int,ts.split(":"))
-                for i in range(sc):
-                    total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                    await d.execute("UPDATE schedule SET is_booked=0 WHERE date=? AND time_slot=?",(date,slot))
-                await d.execute("DELETE FROM appointments WHERE id=?",(appointment_id,))
-                await d.execute("COMMIT")
-        return {"user_id":uid,"date":date,"time_slot":ts,
-                "reminder_job_id":rjid,"repeat_job_id":rpjid,"master_job_id":mjid}
-    except: return None
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("BEGIN EXCLUSIVE")
+            cur = await db.execute(
+                "SELECT user_id,date,time_slot,slots_count,reminder_job_id,"
+                "repeat_job_id,master_job_id,client_name,service_name "
+                "FROM appointments WHERE id=?", (appointment_id,))
+            row = await cur.fetchone()
+            if not row:
+                await db.execute("ROLLBACK")
+                return None
+            user_id, old_date, old_slot, slots_count, reminder_job_id, \
+                repeat_job_id, master_job_id, client_name, service_name = row
+            slots_count = slots_count or 1
+            h, m = map(int, new_time_slot.split(":"))
+            for i in range(slots_count):
+                total = h * 60 + m + i * SLOT_DURATION
+                slot = f"{total // 60:02d}:{total % 60:02d}"
+                cur = await db.execute(
+                    "SELECT is_booked,is_closed FROM schedule WHERE date=? AND time_slot=?",
+                    (new_date, slot))
+                r = await cur.fetchone()
+                if not r or r[0] == 1 or r[1] == 1:
+                    await db.execute("ROLLBACK")
+                    return None
+            oh, om = map(int, old_slot.split(":"))
+            for i in range(slots_count):
+                total = oh * 60 + om + i * SLOT_DURATION
+                slot = f"{total // 60:02d}:{total % 60:02d}"
+                await db.execute(
+                    "UPDATE schedule SET is_booked=0 WHERE date=? AND time_slot=?",
+                    (old_date, slot))
+            for i in range(slots_count):
+                total = h * 60 + m + i * SLOT_DURATION
+                slot = f"{total // 60:02d}:{total % 60:02d}"
+                await db.execute(
+                    "UPDATE schedule SET is_booked=1 WHERE date=? AND time_slot=?",
+                    (new_date, slot))
+            await db.execute(
+                "UPDATE appointments SET date=?,time_slot=? WHERE id=?",
+                (new_date, new_time_slot, appointment_id))
+            await db.execute("COMMIT")
+        return {"user_id": user_id, "slots_count": slots_count,
+                "old_date": old_date, "old_slot": old_slot,
+                "new_date": new_date, "new_slot": new_time_slot,
+                "reminder_job_id": reminder_job_id, "repeat_job_id": repeat_job_id,
+                "master_job_id": master_job_id,
+                "client_name": client_name, "service_name": service_name}
+    except Exception:
+        return None
 
-
-async def get_appointment_by_id(appointment_id):
-    async with db() as c:
-        r=await c.one("SELECT id,user_id,date,time_slot,client_name,service_name,service_key,slots_count "
-                      "FROM appointments WHERE id=?",appointment_id)
-    if not r: return None
-    return {"id":r[0],"user_id":r[1],"date":r[2],"time_slot":r[3],
-            "client_name":r[4],"service_name":r[5],"service_key":r[6],"slots_count":r[7] or 1}
-
-async def cancel_appointment_by_user(user_id):
-    a=await get_user_appointment(user_id)
-    return await cancel_appointment(a["id"]) if a else None
-
-async def reschedule_appointment(appointment_id, new_date, new_time_slot):
-    try:
-        if USE_POSTGRES:
-            async with pg() as conn:
-                async with conn.transaction():
-                    r=await conn.fetchrow(
-                        "SELECT user_id,date,time_slot,slots_count,reminder_job_id,"
-                        "repeat_job_id,master_job_id,client_name,service_name "
-                        "FROM appointments WHERE id=$1 FOR UPDATE",appointment_id)
-                    if not r: return None
-                    uid,od,os_,sc,rjid,rpjid,mjid,cn,sn=r; sc=sc or 1
-                    h,m=map(int,new_time_slot.split(":"))
-                    for i in range(sc):
-                        total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                        nr=await conn.fetchrow("SELECT is_booked,is_closed FROM schedule WHERE date=$1 AND time_slot=$2 FOR UPDATE",new_date,slot)
-                        if not nr or nr[0] or nr[1]: raise Exception("unavailable")
-                    oh,om_=map(int,os_.split(":"))
-                    for i in range(sc):
-                        total=oh*60+om_+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                        await conn.execute("UPDATE schedule SET is_booked=FALSE WHERE date=$1 AND time_slot=$2",od,slot)
-                    for i in range(sc):
-                        total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                        await conn.execute("UPDATE schedule SET is_booked=TRUE WHERE date=$1 AND time_slot=$2",new_date,slot)
-                    await conn.execute("UPDATE appointments SET date=$1,time_slot=$2 WHERE id=$3",new_date,new_time_slot,appointment_id)
-        else:
-            import aiosqlite
-            from config import DB_PATH
-            async with aiosqlite.connect(DB_PATH) as d:
-                await d.execute("BEGIN EXCLUSIVE")
-                cur=await d.execute("SELECT user_id,date,time_slot,slots_count,reminder_job_id,"
-                                    "repeat_job_id,master_job_id,client_name,service_name FROM appointments WHERE id=?",(appointment_id,))
-                r=await cur.fetchone()
-                if not r: await d.execute("ROLLBACK"); return None
-                uid,od,os_,sc,rjid,rpjid,mjid,cn,sn=r; sc=sc or 1
-                h,m=map(int,new_time_slot.split(":"))
-                for i in range(sc):
-                    total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                    cur=await d.execute("SELECT is_booked,is_closed FROM schedule WHERE date=? AND time_slot=?",(new_date,slot))
-                    nr=await cur.fetchone()
-                    if not nr or nr[0]==1 or nr[1]==1: await d.execute("ROLLBACK"); return None
-                oh,om_=map(int,os_.split(":"))
-                for i in range(sc):
-                    total=oh*60+om_+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                    await d.execute("UPDATE schedule SET is_booked=0 WHERE date=? AND time_slot=?",(od,slot))
-                for i in range(sc):
-                    total=h*60+m+i*SLOT_DURATION; slot=f"{total//60:02d}:{total%60:02d}"
-                    await d.execute("UPDATE schedule SET is_booked=1 WHERE date=? AND time_slot=?",(new_date,slot))
-                await d.execute("UPDATE appointments SET date=?,time_slot=? WHERE id=?",(new_date,new_time_slot,appointment_id))
-                await d.execute("COMMIT")
-        return {"user_id":uid,"slots_count":sc,"old_date":od,"old_slot":os_,
-                "new_date":new_date,"new_slot":new_time_slot,
-                "reminder_job_id":rjid,"repeat_job_id":rpjid,"master_job_id":mjid,
-                "client_name":cn,"service_name":sn}
-    except: return None
 
 async def save_job_ids(appointment_id, reminder_job_id=None, repeat_job_id=None, master_job_id=None):
-    async with db() as c:
-        if reminder_job_id is not None: await c.run("UPDATE appointments SET reminder_job_id=? WHERE id=?",reminder_job_id,appointment_id)
-        if repeat_job_id is not None:   await c.run("UPDATE appointments SET repeat_job_id=? WHERE id=?",repeat_job_id,appointment_id)
-        if master_job_id is not None:   await c.run("UPDATE appointments SET master_job_id=? WHERE id=?",master_job_id,appointment_id)
+    async with aiosqlite.connect(DB_PATH) as db:
+        if reminder_job_id is not None:
+            await db.execute("UPDATE appointments SET reminder_job_id=? WHERE id=?",
+                             (reminder_job_id, appointment_id))
+        if repeat_job_id is not None:
+            await db.execute("UPDATE appointments SET repeat_job_id=? WHERE id=?",
+                             (repeat_job_id, appointment_id))
+        if master_job_id is not None:
+            await db.execute("UPDATE appointments SET master_job_id=? WHERE id=?",
+                             (master_job_id, appointment_id))
+        await db.commit()
 
-async def mark_attendance(appointment_id, attended):
-    async with db() as c:
-        await c.run("UPDATE appointments SET attended=? WHERE id=?",int(attended),appointment_id)
 
-async def get_schedule_for_date(date):
-    async with db() as c:
-        rows=await c.all("""SELECT s.time_slot,s.is_booked,s.is_closed,
-               a.client_name,a.phone,a.username,a.user_id,a.id,a.service_name,a.service_price
-               FROM schedule s LEFT JOIN appointments a ON a.date=s.date AND a.time_slot=s.time_slot
-               WHERE s.date=? ORDER BY s.time_slot""",date)
-    return [{"time":r[0],"is_booked":bool(r[1]),"is_closed":bool(r[2]),
-             "client_name":r[3],"phone":r[4],"username":r[5],
-             "user_id":r[6],"appt_id":r[7],"service_name":r[8] or "","service_price":r[9] or 0} for r in rows]
+async def mark_attendance(appointment_id: int, attended: bool):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "UPDATE appointments SET attended=? WHERE id=?", (int(attended), appointment_id))
+        await db.commit()
 
-async def get_all_future_appointments():
-    async with db() as c:
-        rows=await c.all("SELECT id,user_id,client_name,date,time_slot,reminder_job_id,"
-                         "slots_count,service_name,service_key FROM appointments "
-                         "WHERE date>=? ORDER BY date,time_slot",_today_local())
-    return [{"id":r[0],"user_id":r[1],"client_name":r[2],"date":r[3],
-             "time_slot":r[4],"reminder_job_id":r[5],"slots_count":r[6],
-             "service_name":r[7],"service_key":r[8]} for r in rows]
 
-async def get_appointments_for_date(date):
-    async with db() as c:
-        rows=await c.all("SELECT time_slot,client_name,phone,service_name FROM appointments WHERE date=? ORDER BY time_slot",date)
-    return [{"time":r[0],"client_name":r[1],"phone":r[2],"service_name":r[3] or ""} for r in rows]
+async def get_schedule_for_date(date: str) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("""
+            SELECT s.time_slot,s.is_booked,s.is_closed,
+                   a.client_name,a.phone,a.username,a.user_id,a.id,
+                   a.service_name,a.service_price
+            FROM schedule s
+            LEFT JOIN appointments a ON a.date=s.date AND a.time_slot=s.time_slot
+            WHERE s.date=? ORDER BY s.time_slot
+        """, (date,))
+        rows = await cur.fetchall()
+    return [{"time": r[0], "is_booked": bool(r[1]), "is_closed": bool(r[2]),
+             "client_name": r[3], "phone": r[4], "username": r[5],
+             "user_id": r[6], "appt_id": r[7],
+             "service_name": r[8] or "", "service_price": r[9] or 0} for r in rows]
 
-async def create_manual_appointment(client_name, phone, date, time_slot,
-                                    service_key="", service_name="", service_price=0, slots_count=1):
-    return await create_appointment(0,"manual",client_name,phone,date,time_slot,
-                                    service_key,service_name,service_price,slots_count)
+
+async def get_all_future_appointments() -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("""
+            SELECT id,user_id,client_name,date,time_slot,reminder_job_id,
+                   slots_count,service_name,service_key
+            FROM appointments WHERE date >= ? ORDER BY date,time_slot
+        """, (_today_local(),))
+        rows = await cur.fetchall()
+    return [{"id": r[0], "user_id": r[1], "client_name": r[2], "date": r[3],
+             "time_slot": r[4], "reminder_job_id": r[5], "slots_count": r[6],
+             "service_name": r[7], "service_key": r[8]} for r in rows]
+
+
+async def get_appointments_for_date(date: str) -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT time_slot,client_name,phone,service_name FROM appointments "
+            "WHERE date=? ORDER BY time_slot", (date,))
+        rows = await cur.fetchall()
+    return [{"time": r[0], "client_name": r[1], "phone": r[2], "service_name": r[3] or ""}
+            for r in rows]
+
+
+async def create_manual_appointment(
+    client_name, phone, date, time_slot,
+    service_key="", service_name="", service_price=0, slots_count=1
+) -> int | None:
+    return await create_appointment(
+        0, "manual", client_name, phone, date, time_slot,
+        service_key, service_name, service_price, slots_count)
 
 
 # ── Статистика ────────────────────────────────────────────────────────
 
-async def get_stats_month(year, month):
-    pat=f"{year:04d}-{month:02d}-%"
-    async with db() as c:
-        r=await c.one("""SELECT COUNT(*),COUNT(DISTINCT CASE WHEN user_id!=0 THEN user_id END),
-            SUM(service_price),SUM(CASE WHEN attended=1 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN attended=0 THEN 1 ELSE 0 END) FROM appointments WHERE date LIKE ?""",pat)
-        total,uc,rev,att,ns=r[0],r[1],r[2] or 0,r[3],r[4]
-        nc=await c.val("SELECT COUNT(*) FROM (SELECT user_id,MIN(date) fd FROM appointments "
-                       "WHERE user_id!=0 GROUP BY user_id HAVING MIN(date) LIKE ?) t",pat)
-        by_day=await c.all("SELECT date,COUNT(*) FROM appointments WHERE date LIKE ? GROUP BY date ORDER BY date",pat)
-        by_svc=await c.all("SELECT service_name,COUNT(*) FROM appointments WHERE date LIKE ? AND service_name!='' GROUP BY service_name ORDER BY 2 DESC",pat)
-        tc=await c.val("SELECT COUNT(DISTINCT user_id) FROM appointments WHERE user_id!=0")
-    return {"total":total,"unique_clients":uc,"new_clients":nc or 0,
-            "busiest_day":max(by_day,key=lambda x:x[1]) if by_day else None,
-            "total_clients_ever":tc or 0,"by_day":by_day,"revenue":rev,
-            "by_service":by_svc,"attended":att,"no_show":ns}
+async def get_stats_month(year: int, month: int) -> dict:
+    pattern = f"{year:04d}-{month:02d}-%"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("""
+            SELECT COUNT(*),
+                   COUNT(DISTINCT CASE WHEN user_id!=0 THEN user_id END),
+                   SUM(service_price),
+                   SUM(CASE WHEN attended=1 THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN attended=0 THEN 1 ELSE 0 END)
+            FROM appointments WHERE date LIKE ?
+        """, (pattern,))
+        row = await cur.fetchone()
+        total, unique_clients, revenue, attended, no_show = (
+            row[0], row[1], row[2] or 0, row[3], row[4])
+        cur = await db.execute("""
+            SELECT COUNT(*) FROM (
+                SELECT user_id, MIN(date) AS fd FROM appointments
+                WHERE user_id!=0 GROUP BY user_id HAVING fd LIKE ?) t
+        """, (pattern,))
+        new_clients = (await cur.fetchone())[0]
+        cur = await db.execute(
+            "SELECT date,COUNT(*) FROM appointments WHERE date LIKE ? "
+            "GROUP BY date ORDER BY date", (pattern,))
+        by_day = await cur.fetchall()
+        busiest_day = max(by_day, key=lambda x: x[1]) if by_day else None
+        cur = await db.execute(
+            "SELECT service_name,COUNT(*) FROM appointments "
+            "WHERE date LIKE ? AND service_name!='' GROUP BY service_name ORDER BY 2 DESC",
+            (pattern,))
+        by_service = await cur.fetchall()
+        cur = await db.execute(
+            "SELECT COUNT(DISTINCT user_id) FROM appointments WHERE user_id!=0")
+        total_clients = (await cur.fetchone())[0]
+    return {"total": total, "unique_clients": unique_clients, "new_clients": new_clients,
+            "busiest_day": busiest_day, "total_clients_ever": total_clients,
+            "by_day": by_day, "revenue": revenue, "by_service": by_service,
+            "attended": attended, "no_show": no_show}
 
-async def get_stats_alltime():
-    async with db() as c:
-        r=await c.one("""SELECT COUNT(*),COUNT(DISTINCT CASE WHEN user_id!=0 THEN user_id END),
-            SUM(service_price),SUM(CASE WHEN attended=1 THEN 1 ELSE 0 END),
-            SUM(CASE WHEN attended=0 THEN 1 ELSE 0 END) FROM appointments""")
-        total,uc,rev,att,ns=r[0],r[1],r[2] or 0,r[3],r[4]
-        busiest=await c.one("SELECT date,COUNT(*) FROM appointments GROUP BY date ORDER BY 2 DESC LIMIT 1")
-        if USE_POSTGRES:
-            by_month=await c.all("SELECT TO_CHAR(date::date,'YYYY-MM'),COUNT(*) FROM appointments GROUP BY 1 ORDER BY 1 DESC LIMIT 6")
-        else:
-            by_month=await c.all("SELECT strftime('%Y-%m',date),COUNT(*) FROM appointments GROUP BY 1 ORDER BY 1 DESC LIMIT 6")
-        by_svc=await c.all("SELECT service_name,COUNT(*) FROM appointments WHERE service_name!='' GROUP BY service_name ORDER BY 2 DESC")
-    return {"total":total,"unique_clients":uc,"busiest_day":busiest,"by_month":by_month,
-            "revenue":rev,"by_service":by_svc,"attended":att,"no_show":ns}
 
-async def get_all_user_ids():
-    async with db() as c: rows=await c.all("SELECT DISTINCT user_id FROM appointments WHERE user_id!=0")
+async def get_stats_alltime() -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("""
+            SELECT COUNT(*),
+                   COUNT(DISTINCT CASE WHEN user_id!=0 THEN user_id END),
+                   SUM(service_price),
+                   SUM(CASE WHEN attended=1 THEN 1 ELSE 0 END),
+                   SUM(CASE WHEN attended=0 THEN 1 ELSE 0 END)
+            FROM appointments
+        """)
+        row = await cur.fetchone()
+        total, unique_clients, revenue, attended, no_show = (
+            row[0], row[1], row[2] or 0, row[3], row[4])
+        cur = await db.execute(
+            "SELECT date,COUNT(*) FROM appointments GROUP BY date ORDER BY 2 DESC LIMIT 1")
+        busiest = await cur.fetchone()
+        cur = await db.execute(
+            "SELECT strftime('%Y-%m',date) AS m,COUNT(*) FROM appointments "
+            "GROUP BY m ORDER BY m DESC LIMIT 6")
+        by_month = await cur.fetchall()
+        cur = await db.execute(
+            "SELECT service_name,COUNT(*) FROM appointments WHERE service_name!='' "
+            "GROUP BY service_name ORDER BY 2 DESC")
+        by_service = await cur.fetchall()
+    return {"total": total, "unique_clients": unique_clients,
+            "busiest_day": busiest, "by_month": by_month,
+            "revenue": revenue, "by_service": by_service,
+            "attended": attended, "no_show": no_show}
+
+
+async def get_all_user_ids() -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT DISTINCT user_id FROM appointments WHERE user_id!=0")
+        rows = await cur.fetchall()
     return [r[0] for r in rows]
 
-async def get_client_stats(user_id):
-    async with db() as c:
-        r=await c.one("SELECT COUNT(*),SUM(CASE WHEN attended=1 THEN 1 ELSE 0 END),MAX(date) "
-                      "FROM appointments WHERE user_id=? AND (date||' '||time_slot)<?",user_id,_now_local())
-    return {"total":r[0] or 0,"confirmed":r[1] or 0,"last_date":r[2] or ""}
+
+async def get_client_stats(user_id: int) -> dict:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("""
+            SELECT COUNT(*),
+                   SUM(CASE WHEN attended=1 THEN 1 ELSE 0 END),
+                   MAX(date)
+            FROM appointments
+            WHERE user_id=? AND (date||' '||time_slot) < ?
+        """, (user_id, _now_local()))
+        row = await cur.fetchone()
+    return {"total": row[0] or 0, "confirmed": row[1] or 0, "last_date": row[2] or ""}
 
 
 # ── Чёрный список ─────────────────────────────────────────────────────
 
 async def blacklist_add(user_id, username="", client_name="", reason=""):
-    async with db() as c:
-        if USE_POSTGRES:
-            await c.run("INSERT INTO blacklist(user_id,username,client_name,reason) VALUES(?,?,?,?) "
-                        "ON CONFLICT(user_id) DO UPDATE SET username=EXCLUDED.username,"
-                        "client_name=EXCLUDED.client_name,reason=EXCLUDED.reason",
-                        user_id,username,client_name,reason)
-        else:
-            await c.run("INSERT OR REPLACE INTO blacklist(user_id,username,client_name,reason) VALUES(?,?,?,?)",
-                        user_id,username,client_name,reason)
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO blacklist(user_id,username,client_name,reason) VALUES(?,?,?,?)",
+            (user_id, username, client_name, reason))
+        await db.commit()
 
-async def blacklist_remove(user_id):
-    async with db() as c: await c.run("DELETE FROM blacklist WHERE user_id=?",user_id)
 
-async def blacklist_check(user_id):
-    async with db() as c: r=await c.one("SELECT 1 FROM blacklist WHERE user_id=?",user_id)
-    return r is not None
+async def blacklist_remove(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM blacklist WHERE user_id=?", (user_id,))
+        await db.commit()
 
-async def blacklist_get_all():
-    async with db() as c:
-        rows=await c.all("SELECT user_id,username,client_name,reason FROM blacklist ORDER BY created_at DESC")
-    return [{"user_id":r[0],"username":r[1],"client_name":r[2],"reason":r[3]} for r in rows]
+
+async def blacklist_check(user_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("SELECT 1 FROM blacklist WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+    return row is not None
+
+
+async def blacklist_get_all() -> list:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT user_id,username,client_name,reason FROM blacklist ORDER BY created_at DESC")
+        rows = await cur.fetchall()
+    return [{"user_id": r[0], "username": r[1], "client_name": r[2], "reason": r[3]}
+            for r in rows]

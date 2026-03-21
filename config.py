@@ -11,98 +11,41 @@ ADMIN_IDS  = [int(x.strip()) for x in _admin_ids.split(",") if x.strip()]
 ADMIN_ID   = ADMIN_IDS[0] if ADMIN_IDS else 0
 
 # ---- База данных ----
-# PostgreSQL включается если задан DATABASE_URL или DB_HOST
-DATABASE_URL = os.getenv("DATABASE_URL", "")          # postgresql://user:pass@host/db
-DB_HOST      = os.getenv("DB_HOST",     "localhost")
-DB_PORT      = int(os.getenv("DB_PORT", "5432"))
-DB_NAME      = os.getenv("DB_NAME",     "salonapp")
-DB_USER      = os.getenv("DB_USER",     "postgres")
-DB_PASSWORD  = os.getenv("DB_PASSWORD", "")
-DB_POOL_SIZE = int(os.getenv("DB_POOL_SIZE", "5"))
-# Автоопределение: если задан DATABASE_URL или DB_HOST != localhost — используем PG
-USE_POSTGRES = bool(DATABASE_URL or os.getenv("DB_HOST") or os.getenv("DB_PASSWORD"))
-# SQLite fallback (используется только если USE_POSTGRES=False)
-DB_PATH      = os.getenv("DB_PATH", "manicure_bot.db")
+DB_PATH = os.getenv("DB_PATH", "data/manicure_bot.db")
 
 # ---- Бэкап ----
 BACKUP_CHANNEL_ID   = os.getenv("BACKUP_CHANNEL_ID", "")
 BACKUP_HOUR         = int(os.getenv("BACKUP_HOUR", "3"))
 SCHEDULE_CHANNEL_ID = os.getenv("SCHEDULE_CHANNEL_ID", "")
 
-
+# ---- Демо-режим ----
 DEMO_MODE    = os.getenv("DEMO_MODE", "False").lower() == "true"
 DEMO_CONTACT = os.getenv("DEMO_CONTACT", "@ваш_username")
-SLOT_DURATION = 15   # длительность одного слота в минутах
-TIMEZONE      = "Europe/Minsk"  # таймзона мастера (Europe/Moscow, Europe/Minsk, Asia/Almaty и т.д.)
+
+# ---- Расписание ----
+SLOT_DURATION = int(os.getenv("SLOT_DURATION", "15"))
+TIMEZONE      = os.getenv("TIMEZONE", "Europe/Minsk")
 
 # ---- Портфолио ----
-PORTFOLIO_LINK = "https://www.instagram.com/oy_brow_pmu/"
-PORTFOLIO_BUTTON_TEXT = "📸 Смотреть в Instagram"
+PORTFOLIO_LINK        = os.getenv("PORTFOLIO_LINK", "https://www.instagram.com/oy_brow_pmu/")
+PORTFOLIO_BUTTON_TEXT = os.getenv("PORTFOLIO_BUTTON_TEXT", "📸 Смотреть в Instagram")
 
 # ---- Студия ----
-STUDIO_NAME      = "Oy_Brow_Pmu"
-STUDIO_ADDRESS   = "г. Островец, ул. Школьная, 3 к1"
-STUDIO_MAPS_LINK = "https://maps.app.goo.gl/eNa2Mo9VSnmeKL626"
+STUDIO_NAME      = os.getenv("STUDIO_NAME",      "Oy_Brow_Pmu")
+STUDIO_ADDRESS   = os.getenv("STUDIO_ADDRESS",   "г. Островец, ул. Школьная, 3 к1")
+STUDIO_MAPS_LINK = os.getenv("STUDIO_MAPS_LINK", "https://maps.app.goo.gl/eNa2Mo9VSnmeKL626")
 
-# ---- Услуги по умолчанию (загружаются в БД при первом запуске) ----
+# ---- Услуги по умолчанию ----
 DEFAULT_SERVICES = [
-    {
-        "key":          "brows",
-        "name":         "Брови",
-        "price":        35,
-        "slots":        3,        # 3 × 15 мин = 45 мин
-        "duration_str": "~45 мин",
-        "emoji":        "✏️",
-        "repeat_days":  21,
-    },
-    {
-        "key":          "brows_styling",
-        "name":         "Долговременная укладка бровей",
-        "price":        45,
-        "slots":        4,        # 4 × 15 мин = 1 час
-        "duration_str": "~1 час",
-        "emoji":        "✨",
-        "repeat_days":  30,
-    },
-    {
-        "key":          "makeup",
-        "name":         "Макияж",
-        "price":        75,
-        "slots":        6,        # 6 × 15 мин = 1.5 часа
-        "duration_str": "~1.5 часа",
-        "emoji":        "💋",
-        "repeat_days":  0,
-    },
-    {
-        "key":          "perm_2h",
-        "name":         "Перманентный макияж (2 часа)",
-        "price":        200,
-        "slots":        8,        # 8 × 15 мин = 2 часа
-        "duration_str": "~2 часа",
-        "emoji":        "💄",
-        "repeat_days":  30,
-    },
-    {
-        "key":          "perm_3h",
-        "name":         "Перманентный макияж (3 часа)",
-        "price":        200,
-        "slots":        12,       # 12 × 15 мин = 3 часа
-        "duration_str": "~3 часа",
-        "emoji":        "💄",
-        "repeat_days":  30,
-    },
-    {
-        "key":          "perm_correction",
-        "name":         "Коррекция перманента",
-        "price":        100,
-        "slots":        8,        # 8 × 15 мин = 2 часа
-        "duration_str": "~2 часа",
-        "emoji":        "🔧",
-        "repeat_days":  0,
-    },
+    {"key": "brows",           "name": "Брови",                          "price": 35,  "slots": 3,  "duration_str": "~45 мин",  "emoji": "✏️",  "repeat_days": 21},
+    {"key": "brows_styling",   "name": "Долговременная укладка бровей",  "price": 45,  "slots": 4,  "duration_str": "~1 час",   "emoji": "✨",  "repeat_days": 30},
+    {"key": "makeup",          "name": "Макияж",                         "price": 75,  "slots": 6,  "duration_str": "~1.5 часа","emoji": "💋",  "repeat_days": 0},
+    {"key": "perm_2h",         "name": "Перманентный макияж (2 часа)",   "price": 200, "slots": 8,  "duration_str": "~2 часа",  "emoji": "💄",  "repeat_days": 30},
+    {"key": "perm_3h",         "name": "Перманентный макияж (3 часа)",   "price": 200, "slots": 12, "duration_str": "~3 часа",  "emoji": "💄",  "repeat_days": 30},
+    {"key": "perm_correction", "name": "Коррекция перманента",           "price": 100, "slots": 8,  "duration_str": "~2 часа",  "emoji": "🔧",  "repeat_days": 0},
 ]
 
-# ---- Тексты сообщений (можно менять) ----
+# ---- Тексты сообщений ----
 MSG_WELCOME = (
     "👋 Привет, <b>{name}</b>!\n\n"
     "Добро пожаловать в бот студии <b>{studio}</b>.\n"
