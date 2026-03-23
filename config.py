@@ -22,6 +22,9 @@ SCHEDULE_CHANNEL_ID = os.getenv("SCHEDULE_CHANNEL_ID", "")
 DEMO_MODE    = os.getenv("DEMO_MODE", "False").lower() == "true"
 DEMO_CONTACT = os.getenv("DEMO_CONTACT", "@ваш_username")
 
+# ---- Согласие на обработку персональных данных ----
+PRIVACY_POLICY_URL = os.getenv("PRIVACY_POLICY_URL", "https://docs.google.com/document/d/1gAaFWm72Jh-s-5TDS0zsH4tZvdw_c3bZ3wUFhyKRdfs/edit?usp=sharing")
+
 # ---- Расписание ----
 SLOT_DURATION = int(os.getenv("SLOT_DURATION", "15"))
 TIMEZONE      = os.getenv("TIMEZONE", "Europe/Minsk")

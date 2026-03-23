@@ -67,6 +67,11 @@ async def init_db():
                 reason      TEXT DEFAULT '',
                 created_at  TEXT DEFAULT (datetime('now','localtime'))
             );
+            CREATE TABLE IF NOT EXISTS consent (
+                user_id       INTEGER PRIMARY KEY,
+                consent_given INTEGER DEFAULT 0,
+                consent_date  TEXT DEFAULT (datetime('now','localtime'))
+            );
         """)
         for col, dfn in [
             ("phone",         "TEXT NOT NULL DEFAULT '—'"),
@@ -688,3 +693,25 @@ async def blacklist_get_all() -> list:
         rows = await cur.fetchall()
     return [{"user_id": r[0], "username": r[1], "client_name": r[2], "reason": r[3]}
             for r in rows]
+
+
+# ── Согласие на обработку персональных данных ────────────────────────
+
+async def consent_check(user_id: int) -> bool:
+    """Вернуть True если пользователь дал согласие."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute(
+            "SELECT consent_given FROM consent WHERE user_id=?", (user_id,))
+        row = await cur.fetchone()
+    return bool(row and row[0])
+
+
+async def consent_save(user_id: int, given: bool):
+    """Сохранить решение пользователя."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO consent(user_id, consent_given, consent_date) "
+            "VALUES(?, ?, datetime('now','localtime'))",
+            (user_id, int(given))
+        )
+        await db.commit()
